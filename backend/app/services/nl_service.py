@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 
 class NaturalLanguageService:
     def __init__(self):
-        self.groq_client = groq.Client(api_key=os.getenv("GROQ_API_KEY"))
+        groq_api_key = os.getenv("GROQ_API_KEY", "")
+        logger.info(f"Initializing NL service with GROQ API key: {groq_api_key[:5]}...")
+        self.groq_client = groq.Client(api_key=groq_api_key)
         self.agent_service = AgentService()
         self.tool_service = ToolService()
 

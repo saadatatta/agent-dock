@@ -13,6 +13,8 @@ from app.schemas.tool import (
 )
 from app.models.tool import Tool as ToolModel
 from app.services.tool_service import ToolService
+import os
+import requests
 
 router = APIRouter()
 tool_service = ToolService()
@@ -175,4 +177,100 @@ async def execute_jira_action(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
+        )
+
+@router.post("/github/test", status_code=status.HTTP_200_OK)
+async def test_github_api(db: Session = Depends(get_db)):
+    """Test GitHub API integration"""
+    try:
+        github_token = os.getenv("GITHUB_TOKEN")
+        if not github_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GitHub token not configured"
+            )
+
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+
+        # Test with a simple endpoint that returns user info
+        response = requests.get("https://api.github.com/user", headers=headers)
+        response.raise_for_status()
+        
+        return {
+            "status": "success",
+            "message": "GitHub API connection successful",
+            "user_data": response.json()
+        }
+    except requests.HTTPError as e:
+        if e.response.status_code == 401:
+            detail = "Authentication failed. Check your GitHub token."
+        else:
+            detail = f"GitHub API error: {str(e)}"
+        
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error testing GitHub API: {str(e)}"
+        )
+
+@router.post("/github/repos", status_code=status.HTTP_200_OK)
+async def get_github_repos(db: Session = Depends(get_db)):
+    """Get GitHub repositories"""
+    try:
+        github_token = os.getenv("GITHUB_TOKEN")
+        if not github_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GitHub token not configured"
+            )
+
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+
+        # Get repositories
+        response = requests.get("https://api.github.com/user/repos?per_page=10", headers=headers)
+        response.raise_for_status()
+        repos = response.json()
+        
+        # Extract relevant information
+        repo_list = [
+            {
+                "name": repo["name"],
+                "description": repo["description"],
+                "url": repo["html_url"],
+                "stars": repo["stargazers_count"],
+                "forks": repo["forks_count"],
+                "language": repo["language"]
+            }
+            for repo in repos
+        ]
+        
+        return {
+            "status": "success",
+            "message": "GitHub repositories retrieved successfully",
+            "repos": repo_list
+        }
+    except requests.HTTPError as e:
+        if e.response.status_code == 401:
+            detail = "Authentication failed. Check your GitHub token."
+        else:
+            detail = f"GitHub API error: {str(e)}"
+        
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error fetching GitHub repositories: {str(e)}"
         ) 
