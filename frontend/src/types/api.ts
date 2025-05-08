@@ -11,9 +11,9 @@ export interface Agent {
 export interface Tool {
   id: number;
   name: string;
-  type: string;
   description: string;
-  config: Record<string, any>;
+  api_endpoint: string;
+  parameters: Record<string, any>;
   is_active: boolean;
 }
 
@@ -27,5 +27,6 @@ export interface PaginatedResponse<T> {
   status: string;
   data: T[];
   total: number;
-  message?: string;
+  skip: number;
+  limit: number;
 } 

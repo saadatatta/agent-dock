@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   TextField,
   Button,
-  Paper,
   Typography,
   CircularProgress,
   Chip,
@@ -14,7 +13,10 @@ import {
   Avatar,
   Alert,
   Collapse,
-  Link
+  Link as MuiLink,
+  useTheme,
+  Paper,
+  InputAdornment
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -22,9 +24,16 @@ import {
   Person as UserIcon,
   Clear as ClearIcon,
   Info as InfoIcon,
-  GitHub as GitHubIcon
+  GitHub as GitHubIcon,
+  Code as CodeIcon,
+  Delete as DeleteIcon,
+  AutoAwesome as MagicIcon
 } from '@mui/icons-material';
 import axios from 'axios';
+import { motion, AnimatePresence } from 'framer-motion';
+import Markdown from 'react-markdown';
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface Message {
   id: string;
@@ -45,14 +54,44 @@ interface GitHubRepo {
 }
 
 const AgentChat: React.FC = () => {
+  const theme = useTheme();
   const [query, setQuery] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAlert, setShowAlert] = useState(true);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Animation variants
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: { 
+      opacity: 1,
+      transition: { 
+        when: "beforeChildren",
+        staggerChildren: 0.1
+      }
+    }
+  };
+
+  const messageVariants = {
+    hidden: { 
+      opacity: 0, 
+      y: 20
+    },
+    visible: { 
+      opacity: 1, 
+      y: 0,
+      transition: {
+        type: 'spring',
+        damping: 15,
+        stiffness: 100
+      }
+    }
+  };
 
   // Add a system message on component mount
-  React.useEffect(() => {
+  useEffect(() => {
     const systemMessage: Message = {
       id: 'system-welcome',
       content: 'Welcome to Agent Chat! You can ask questions like "Show me my GitHub repositories" or "What tools are available?". Note that GROQ API integration must be properly configured for this to work fully.',
@@ -61,6 +100,11 @@ const AgentChat: React.FC = () => {
     };
     setMessages([systemMessage]);
   }, []);
+
+  // Scroll to bottom whenever messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setQuery(e.target.value);
@@ -199,42 +243,16 @@ const AgentChat: React.FC = () => {
         };
         setMessages(prev => [...prev, agentMessage]);
       } else {
-        // Add error message
-        const errorMsg = response.data.message || 'An error occurred processing your query';
-        setError(errorMsg);
-        const errorMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: `Error: ${errorMsg}`,
-          sender: 'system',
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, errorMessage]);
+        setError(response.data.message || 'Failed to process query');
       }
-    } catch (err) {
-      console.error('Error processing query:', err);
-      let errorMsg = '';
-      if (axios.isAxiosError(err)) {
-        if (err.response) {
-          // The request was made and the server responded with a status code
-          // that falls out of the range of 2xx
-          errorMsg = `Server error: ${err.response.status} - ${err.response.data?.detail || JSON.stringify(err.response.data)}`;
-        } else if (err.request) {
-          // The request was made but no response was received
-          errorMsg = 'No response from server. Please check if the backend is running.';
-        } else {
-          // Something happened in setting up the request that triggered an Error
-          errorMsg = `Error: ${err.message}`;
-        }
-      } else {
-        errorMsg = err instanceof Error ? err.message : 'An unknown error occurred';
-      }
+    } catch (error) {
+      console.error('Error processing query:', error);
+      setError('Error processing query. Please try again.');
       
-      setError(errorMsg);
-      
-      // Add error message to chat
+      // Add system error message
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: `Error: ${errorMsg}`,
+        content: 'Sorry, there was an error processing your query. Please try again later.',
         sender: 'system',
         timestamp: new Date()
       };
@@ -245,244 +263,387 @@ const AgentChat: React.FC = () => {
   };
 
   const clearChat = () => {
-    // Keep only the welcome message
-    setMessages(messages.filter(msg => msg.id === 'system-welcome'));
-    setError(null);
+    if (window.confirm('Are you sure you want to clear the chat history?')) {
+      const systemMessage: Message = {
+        id: 'system-welcome',
+        content: 'Chat history cleared. How can I assist you today?',
+        sender: 'system',
+        timestamp: new Date()
+      };
+      setMessages([systemMessage]);
+    }
   };
 
   const getMessageColor = (sender: string) => {
-    switch(sender) {
-      case 'user': return 'primary.light';
-      case 'agent': return 'white';
-      case 'system': return '#f5f5f5';
-      default: return 'white';
+    switch (sender) {
+      case 'user':
+        return theme.palette.primary.main;
+      case 'agent':
+        return theme.palette.secondary.main;
+      case 'system':
+      default:
+        return theme.palette.grey[600];
     }
   };
 
   const getTextColor = (sender: string) => {
-    switch(sender) {
-      case 'user': return 'white';
-      case 'agent': return 'text.primary';
-      case 'system': return 'text.secondary';
-      default: return 'text.primary';
+    switch (sender) {
+      case 'user':
+        return theme.palette.primary.contrastText;
+      case 'agent':
+        return theme.palette.secondary.contrastText;
+      case 'system':
+      default:
+        return theme.palette.text.primary;
     }
   };
 
-  // Format message content with Markdown-like syntax
   const formatMessageContent = (content: string) => {
-    if (!content) return '';
-    
-    // Very basic markdown-like formatting
-    const formattedLines = content.split('\n').map((line, index) => {
-      // Headings
-      if (line.startsWith('# ')) {
-        return <Typography key={index} variant="h5" sx={{ mt: 1, mb: 1 }}>{line.substring(2)}</Typography>;
-      }
-      if (line.startsWith('## ')) {
-        return <Typography key={index} variant="h6" sx={{ mt: 1, mb: 0.5 }}>{line.substring(3)}</Typography>;
-      }
-      
-      // List items
-      if (line.startsWith('- ')) {
-        return <Typography key={index} component="li" sx={{ ml: 2 }}>{line.substring(2)}</Typography>;
-      }
-      
-      // Links (very simple approach)
-      if (line.includes('http://') || line.includes('https://')) {
-        const parts = line.split(/(https?:\/\/[^\s]+)/g);
-        return (
-          <Typography key={index} variant="body1" sx={{ mb: 0.5 }}>
-            {parts.map((part, i) => {
-              if (part.startsWith('http')) {
-                return (
-                  <Link key={i} href={part} target="_blank" rel="noopener noreferrer">
-                    {part}
-                  </Link>
-                );
-              }
-              return part;
-            })}
-          </Typography>
-        );
-      }
-      
-      // Regular text
-      return line ? <Typography key={index} variant="body1" sx={{ mb: 0.5 }}>{line}</Typography> : <br key={index} />;
-    });
-    
-    return <>{formattedLines}</>;
+    return (
+      <Markdown
+        components={{
+          code(props) {
+            const {children, className, ...rest} = props;
+            const match = /language-(\w+)/.exec(className || '');
+            
+            if (!match) {
+              return (
+                <code 
+                  className={className}
+                  style={{ 
+                    backgroundColor: 'rgba(0,0,0,0.1)', 
+                    padding: '0.2em 0.4em',
+                    borderRadius: '3px',
+                    fontFamily: '"Fira Code", monospace',
+                    fontSize: '85%'
+                  }}
+                >
+                  {children}
+                </code>
+              );
+            }
+            
+            return (
+              <SyntaxHighlighter
+                language={match[1]}
+                style={atomDark}
+                PreTag="div"
+                customStyle={{
+                  borderRadius: '8px',
+                  marginTop: '1em',
+                  marginBottom: '1em'
+                }}
+              >
+                {String(children).replace(/\n$/, '')}
+              </SyntaxHighlighter>
+            );
+          },
+          h1(props) {
+            return <Typography variant="h4" component="h1" gutterBottom>{props.children}</Typography>;
+          },
+          h2(props) {
+            return <Typography variant="h5" component="h2" gutterBottom>{props.children}</Typography>;
+          },
+          h3(props) {
+            return <Typography variant="h6" component="h3" gutterBottom>{props.children}</Typography>;
+          },
+          p(props) {
+            return <Typography variant="body1" component="p" paragraph>{props.children}</Typography>;
+          },
+          a(props) {
+            return <MuiLink color="secondary" href={props.href} target="_blank" rel="noopener">{props.children}</MuiLink>;
+          },
+          li(props) {
+            return <Typography component="li" variant="body1">{props.children}</Typography>;
+          },
+          ul(props) {
+            return <Box component="ul" sx={{ pl: 2 }}>{props.children}</Box>;
+          },
+          ol(props) {
+            return <Box component="ol" sx={{ pl: 2 }}>{props.children}</Box>;
+          }
+        }}
+      >
+        {content}
+      </Markdown>
+    );
   };
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4">Agent Chat</Typography>
-        <Button 
-          variant="outlined" 
-          startIcon={<ClearIcon />} 
-          onClick={clearChat}
-          disabled={messages.length <= 1}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography 
+          variant="h4" 
+          component={motion.h1}
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          sx={{ 
+            fontWeight: 700,
+            background: 'linear-gradient(90deg, #fff, #ccc)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent'
+          }}
         >
-          Clear Chat
-        </Button>
+          Agent Chat
+        </Typography>
+        
+        <motion.div
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >
+          <Button
+            variant="outlined"
+            color="error"
+            startIcon={<DeleteIcon />}
+            onClick={clearChat}
+            size="small"
+            sx={{ borderRadius: 2 }}
+          >
+            Clear
+          </Button>
+        </motion.div>
       </Box>
-
+      
       <Collapse in={showAlert}>
         <Alert 
-          severity="info" 
-          onClose={() => setShowAlert(false)}
-          sx={{ mb: 2 }}
+          severity="info"
+          action={
+            <IconButton
+              aria-label="close"
+              color="inherit"
+              size="small"
+              onClick={() => setShowAlert(false)}
+            >
+              <ClearIcon fontSize="inherit" />
+            </IconButton>
+          }
+          sx={{ 
+            mb: 2, 
+            borderRadius: 2,
+            background: 'rgba(0, 255, 255, 0.05)', 
+            border: '1px solid rgba(0, 255, 255, 0.1)',
+            '& .MuiAlert-icon': {
+              color: theme.palette.primary.main
+            }
+          }}
         >
-          This feature requires a valid GROQ API key for full functionality. However, basic GitHub queries will work without it.
-          Try asking "Show my GitHub repositories" to test the GitHub integration.
+          <Typography variant="body2">
+            This chat connects to your backend services and AI models. Try asking about your agents, tools, or GitHub repositories.
+          </Typography>
         </Alert>
       </Collapse>
 
-      {/* Chat messages area */}
       <Paper
-        elevation={3}
-        sx={{
-          height: '60vh',
-          p: 2,
+        sx={{ 
+          flex: 1, 
+          p: 2, 
+          maxHeight: 'calc(100vh - 240px)', 
+          overflowY: 'auto',
           mb: 2,
-          overflow: 'auto',
-          bgcolor: '#f5f5f5'
+          borderRadius: 3,
+          boxShadow: 'none',
+          background: 'rgba(0, 0, 0, 0.1)',
+          border: '1px solid rgba(255, 255, 255, 0.05)',
+          '&::-webkit-scrollbar': {
+            width: '8px',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: 'transparent',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(255, 255, 255, 0.1)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb:hover': {
+            background: 'rgba(255, 255, 255, 0.2)',
+          },
         }}
       >
-        {messages.length === 0 ? (
-          <Box
-            sx={{
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
-              alignItems: 'center',
-              color: 'text.secondary'
-            }}
-          >
-            <AgentIcon sx={{ fontSize: 60, mb: 2, opacity: 0.7 }} />
-            <Typography variant="body1">
-              Start a conversation with the AI agents by typing a message below.
-            </Typography>
-          </Box>
-        ) : (
-          messages.map((message) => (
-            <Box
-              key={message.id}
-              sx={{
-                display: 'flex',
-                justifyContent: message.sender === 'user' ? 'flex-end' : 'flex-start',
-                mb: 2
-              }}
-            >
-              <Card
-                sx={{
-                  maxWidth: message.sender === 'system' ? '100%' : '80%',
-                  width: message.sender === 'system' ? '100%' : 'auto',
-                  bgcolor: getMessageColor(message.sender),
-                  color: getTextColor(message.sender)
-                }}
+        <motion.div
+          variants={containerVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          <AnimatePresence>
+            {messages.map((message, index) => (
+              <motion.div
+                key={message.id}
+                variants={messageVariants}
+                initial="hidden"
+                animate="visible"
+                exit={{ opacity: 0, y: -10 }}
+                layout
               >
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                    <Avatar
-                      sx={{
-                        bgcolor: message.sender === 'user' 
-                          ? 'primary.dark' 
-                          : message.sender === 'agent' 
-                            ? (message.agentName?.includes('GitHub') ? '#333' : 'secondary.light')
-                            : 'grey.400',
-                        mr: 1
+                <Box 
+                  sx={{ 
+                    display: 'flex', 
+                    flexDirection: message.sender === 'user' ? 'row-reverse' : 'row',
+                    mb: 2,
+                    alignItems: 'flex-start'
+                  }}
+                >
+                  <Avatar
+                    sx={{ 
+                      bgcolor: getMessageColor(message.sender),
+                      mr: message.sender === 'user' ? 0 : 1,
+                      ml: message.sender === 'user' ? 1 : 0,
+                      width: 36,
+                      height: 36,
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                      border: '2px solid rgba(255,255,255,0.1)'
+                    }}
+                  >
+                    {message.sender === 'user' ? (
+                      <UserIcon fontSize="small" />
+                    ) : message.sender === 'agent' ? (
+                      <AgentIcon fontSize="small" />
+                    ) : (
+                      <InfoIcon fontSize="small" />
+                    )}
+                  </Avatar>
+                  
+                  <motion.div
+                    initial={{ scale: 0.95 }}
+                    animate={{ scale: 1 }}
+                    transition={{ duration: 0.2 }}
+                    style={{ 
+                      maxWidth: '80%',
+                      position: 'relative'
+                    }}
+                  >
+                    <Card
+                      sx={{ 
+                        borderRadius: 3,
+                        overflow: 'hidden',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+                        backdropFilter: 'blur(10px)',
+                        border: '1px solid rgba(255, 255, 255, 0.05)',
+                        background: message.sender === 'user' 
+                          ? 'rgba(0, 255, 255, 0.05)'
+                          : message.sender === 'agent'
+                            ? 'rgba(255, 0, 255, 0.05)'
+                            : 'rgba(255, 255, 255, 0.05)',
                       }}
                     >
-                      {message.sender === 'user' 
-                        ? <UserIcon /> 
-                        : message.sender === 'agent'
-                          ? (message.agentName?.includes('GitHub') ? <GitHubIcon /> : <AgentIcon />)
-                          : <InfoIcon />
-                      }
-                    </Avatar>
-                    <Typography variant="subtitle2">
-                      {message.sender === 'user' 
-                        ? 'You' 
-                        : message.sender === 'agent'
-                          ? (message.agentName || 'AI Assistant')
-                          : 'System'
-                      }
-                    </Typography>
-                  </Box>
-                  
-                  <Box sx={{ 
-                    fontFamily: (message.content.includes('{') && message.content.includes('}')) || 
-                               (message.content.includes('[') && message.content.includes(']'))
-                      ? '"Roboto Mono", monospace' 
-                      : 'inherit'
-                  }}>
-                    {message.content.includes('{') && message.content.includes('}') ? (
-                      <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {message.content}
-                      </Typography>
-                    ) : (
-                      formatMessageContent(message.content)
-                    )}
-                  </Box>
-                  
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', textAlign: 'right' }}>
-                    {message.timestamp.toLocaleTimeString()}
-                  </Typography>
-                </CardContent>
-              </Card>
+                      {message.agentName && (
+                        <Box 
+                          sx={{ 
+                            px: 2, 
+                            py: 1, 
+                            borderBottom: '1px solid rgba(255,255,255,0.05)',
+                            background: 'rgba(0,0,0,0.2)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1
+                          }}
+                        >
+                          <MagicIcon fontSize="small" sx={{ color: theme.palette.secondary.main }} />
+                          <Typography variant="subtitle2" color="text.secondary">
+                            {message.agentName}
+                          </Typography>
+                        </Box>
+                      )}
+                      
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Box sx={{ fontSize: '0.95rem' }}>
+                          {formatMessageContent(message.content)}
+                        </Box>
+                        
+                        <Typography 
+                          variant="caption" 
+                          sx={{ 
+                            display: 'block', 
+                            textAlign: 'right',
+                            mt: 1,
+                            opacity: 0.6
+                          }}
+                        >
+                          {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                </Box>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+          {loading && (
+            <Box sx={{ display: 'flex', p: 2, justifyContent: 'center' }}>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3 }}
+              >
+                <CircularProgress size={30} color="secondary" />
+              </motion.div>
             </Box>
-          ))
-        )}
+          )}
+          <div ref={messagesEndRef} />
+        </motion.div>
       </Paper>
 
-      {/* Input area */}
-      <Paper elevation={3} sx={{ p: 2 }}>
-        <form onSubmit={handleSubmit}>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <TextField
-              fullWidth
-              variant="outlined"
-              placeholder="Ask something (e.g., 'Show me my GitHub repositories')"
-              value={query}
-              onChange={handleQueryChange}
-              disabled={loading}
-            />
-            <Button
-              type="submit"
-              variant="contained"
-              color="primary"
-              endIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SendIcon />}
-              disabled={loading || !query.trim()}
-            >
-              Send
-            </Button>
-          </Box>
-        </form>
-        
-        {error && (
-          <Typography color="error" variant="body2" sx={{ mt: 1 }}>
-            {error}
-          </Typography>
-        )}
+      <Paper
+        component="form"
+        onSubmit={handleSubmit}
+        sx={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          p: 1,
+          borderRadius: 3,
+          backdropFilter: 'blur(10px)',
+          background: 'rgba(0, 0, 0, 0.1)',
+          border: '1px solid rgba(255, 255, 255, 0.05)',
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)'
+        }}
+      >
+        <TextField
+          fullWidth
+          placeholder="Ask a question..."
+          value={query}
+          onChange={handleQueryChange}
+          variant="outlined"
+          disabled={loading}
+          InputProps={{
+            endAdornment: (
+              <InputAdornment position="end">
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  <IconButton
+                    color="primary"
+                    type="submit"
+                    disabled={loading || !query.trim()}
+                    sx={{
+                      bgcolor: 'rgba(0, 255, 255, 0.1)',
+                      '&:hover': {
+                        bgcolor: 'rgba(0, 255, 255, 0.2)',
+                      }
+                    }}
+                  >
+                    <SendIcon />
+                  </IconButton>
+                </motion.div>
+              </InputAdornment>
+            ),
+            sx: {
+              borderRadius: 2,
+              bgcolor: 'rgba(0, 0, 0, 0.1)',
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: 'rgba(255, 255, 255, 0.1)',
+              },
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: 'rgba(255, 255, 255, 0.2)',
+              },
+              '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+                borderColor: theme.palette.primary.main,
+              },
+            }
+          }}
+        />
       </Paper>
-
-      {/* Example queries */}
-      <Box sx={{ mt: 2 }}>
-        <Typography variant="subtitle2" color="text.secondary">Example queries:</Typography>
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
-          <Chip 
-            label="Show my GitHub repositories" 
-            onClick={() => setQuery("Show my GitHub repositories")}
-            icon={<GitHubIcon />}
-          />
-          <Chip 
-            label="What tools are available?" 
-            onClick={() => setQuery("What tools are available?")}
-          />
-        </Box>
-      </Box>
     </Box>
   );
 };
