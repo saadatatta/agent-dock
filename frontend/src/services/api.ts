@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Agent, Tool, ApiResponse, PaginatedResponse } from '../types/api';
+import { Agent, Tool, ApiResponse, PaginatedResponse, ToolLog } from '../types/api';
 
 const API_BASE_URL = 'http://localhost:8000/api/v1';
 
@@ -72,4 +72,21 @@ export const toolApi = {
     const response = await api.delete(`/tools/${id}`);
     return response.data;
   },
+
+  getToolLogs: async (toolId: number, skip = 0, limit = 10): Promise<PaginatedResponse<ToolLog>> => {
+    const response = await api.get(`/tools/${toolId}/logs?skip=${skip}&limit=${limit}`);
+    return response.data;
+  },
+};
+
+export const logApi = {
+  getAllLogs: async (skip = 0, limit = 10): Promise<PaginatedResponse<ToolLog>> => {
+    const response = await api.get(`/tools/logs?skip=${skip}&limit=${limit}`);
+    return response.data;
+  },
+
+  deleteLog: async (logId: number): Promise<ApiResponse<ToolLog>> => {
+    const response = await api.delete(`/tools/logs/${logId}`);
+    return response.data;
+  }
 }; 

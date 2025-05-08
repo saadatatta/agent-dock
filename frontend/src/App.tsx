@@ -8,6 +8,7 @@ import AgentChat from './components/AgentChat';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import BackgroundAnimation from './components/BackgroundAnimation';
+import ToolLogsList from './components/ToolLogsList';
 
 // Create a dark theme with futuristic colors
 const theme = createTheme({
@@ -149,6 +150,7 @@ const AnimatedRoutes = () => {
         <Routes location={location}>
           <Route path="/" element={<AgentList />} />
           <Route path="/tools" element={<ToolList />} />
+          <Route path="/logs" element={<ToolLogsList />} />
           <Route path="/chat" element={<AgentChat />} />
           <Route path="/dashboard" element={
             <Box sx={{ 
