@@ -1,11 +1,12 @@
 #!/bin/bash
-echo "Restarting containers..."
+echo "Stopping containers (preserving data)..."
+docker-compose down
 
-# Instead of removing containers, just restart them
-docker-compose restart
+echo "Rebuilding and starting containers..."
+docker-compose up -d --build
 
 echo "Waiting for services to start..."
-sleep 15
+sleep 20
 
 echo "Checking backend health..."
 curl http://localhost:8000/health

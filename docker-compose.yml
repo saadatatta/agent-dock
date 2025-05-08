@@ -7,12 +7,13 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/agentdock
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - SLACK_TOKEN=${SLACK_TOKEN}
-      - JIRA_TOKEN=${JIRA_TOKEN}
+      - GROQ_API_KEY=${GROQ_API_KEY:-your_groq_api_key_here}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-your_github_token_here}
+      - SLACK_TOKEN=${SLACK_TOKEN:-your_slack_token_here}
+      - JIRA_TOKEN=${JIRA_TOKEN:-your_jira_token_here}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - ./backend:/app
     networks:
@@ -20,10 +21,10 @@ services:
     command: >
       bash -c "
         echo 'Waiting for database to be ready...' &&
-        sleep 5 &&
         python init_db.py &&
         uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
       "
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
@@ -33,27 +34,35 @@ services:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_API_URL=${REACT_APP_API_URL:-http://localhost:8000}
     depends_on:
       - backend
     networks:
       - agentdock-network
+    restart: unless-stopped
 
   db:
     image: postgres:13
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=agentdock
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-agentdock}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - agentdock-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:
+    driver: local
 
 networks:
   agentdock-network:

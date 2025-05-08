@@ -19,8 +19,12 @@ from app.models.base import Base
 from app.models.agent import Agent, agent_tools
 from app.models.tool import Tool, ToolLog
 
-def init_db():
-    """Initialize the database by creating all tables."""
+def init_db(drop_all=False):
+    """Initialize the database by creating all tables.
+    
+    Args:
+        drop_all (bool): If True, drop all existing tables before creating new ones.
+    """
     try:
         logger.info("Starting database initialization...")
         
@@ -29,18 +33,27 @@ def init_db():
         
         # Print the tables that will be created
         tables = Base.metadata.tables
-        logger.info(f"Tables to be created: {', '.join(tables.keys())}")
+        logger.info(f"Tables to be created or verified: {', '.join(tables.keys())}")
         
-        # Drop all tables
-        logger.info("Dropping all existing tables...")
-        Base.metadata.drop_all(bind=engine)
+        # Check if tables exist
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
         
-        # Create the tables
-        logger.info("Creating all tables...")
+        if drop_all:
+            # Drop all tables if requested
+            logger.info("Dropping all existing tables...")
+            Base.metadata.drop_all(bind=engine)
+        elif existing_tables:
+            # Tables exist, just log that we're not recreating them
+            logger.info(f"Found existing tables: {', '.join(existing_tables)}")
+            logger.info("Database already initialized. Will only create missing tables.")
+        
+        # Create the tables (SQLAlchemy will only create tables that don't exist)
+        logger.info("Creating missing tables...")
         Base.metadata.create_all(bind=engine)
         
         # Verify tables were created
-        from sqlalchemy import inspect
         inspector = inspect(engine)
         db_tables = inspector.get_table_names()
         logger.info(f"Tables in database: {', '.join(db_tables)}")
@@ -133,4 +146,6 @@ def init_db():
         raise
 
 if __name__ == "__main__":
-    init_db() 
+    # Check if --drop-all flag is provided
+    drop_all = "--drop-all" in sys.argv
+    init_db(drop_all=drop_all) 
