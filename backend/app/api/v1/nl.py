@@ -26,6 +26,7 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
     """Process a natural language query"""
     try:
         result = nl_service.process_query(db, request.query)
+        print(result)
         return QueryResponse(
             status=result["status"],
             result=result.get("result", {}),

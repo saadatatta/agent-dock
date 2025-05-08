@@ -18,11 +18,13 @@ import {
 import {
   Menu as MenuIcon,
   SmartToy as SmartToyIcon,
-  Build as BuildIcon
+  Build as BuildIcon,
+  Chat as ChatIcon
 } from '@mui/icons-material';
 import { createTheme } from '@mui/material/styles';
 import AgentList from './components/AgentList';
 import ToolList from './components/ToolList';
+import AgentChat from './components/AgentChat';
 
 const theme = createTheme({
   palette: {
@@ -48,6 +50,7 @@ const App: React.FC = () => {
   const menuItems = [
     { text: 'Agents', icon: <SmartToyIcon />, path: '/' },
     { text: 'Tools', icon: <BuildIcon />, path: '/tools' },
+    { text: 'Chat', icon: <ChatIcon />, path: '/chat' },
   ];
 
   const drawer = (
@@ -147,6 +150,7 @@ const App: React.FC = () => {
               <Routes>
                 <Route path="/" element={<AgentList />} />
                 <Route path="/tools" element={<ToolList />} />
+                <Route path="/chat" element={<AgentChat />} />
               </Routes>
             </Container>
           </Box>
