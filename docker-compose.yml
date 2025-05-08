@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/agentdock
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - SLACK_TOKEN=${SLACK_TOKEN}
+      - JIRA_TOKEN=${JIRA_TOKEN}
+    depends_on:
+      - db
+    volumes:
+      - ./backend:/app
+    networks:
+      - agentdock-network
+    command: >
+      bash -c "
+        echo 'Waiting for database to be ready...' &&
+        sleep 5 &&
+        python init_db.py &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - agentdock-network
+
+  db:
+    image: postgres:13
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=agentdock
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - agentdock-network
+
+volumes:
+  postgres_data:
+
+networks:
+  agentdock-network:
+    driver: bridge 
