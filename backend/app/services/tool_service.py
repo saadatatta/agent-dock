@@ -98,13 +98,14 @@ class ToolService:
                 response = requests.get("https://api.github.com/user/repos", headers=headers)
                 response.raise_for_status()
                 result = response.json()
-            elif action == "get_prs":
+            elif action == "list_pull_requests":
                 repo = params.get("repo")
                 if not repo:
                     raise ValueError("Repository name required")
                 response = requests.get(f"https://api.github.com/repos/{repo}/pulls", headers=headers)
                 response.raise_for_status()
                 result = response.json()
+                print("GITHUB RESULT", result)
             else:
                 raise ValueError(f"Unsupported GitHub action: {action}")
 
