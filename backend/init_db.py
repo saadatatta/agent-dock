@@ -191,7 +191,7 @@ if action == "get_repositories":
         # Execute the GitHub API tool
         repos = execute_tool(github_tool.id, "get_repos", params)
         result = {
-            "repositories": repos,
+            "repos": repos,
             "count": len(repos)
         }
 

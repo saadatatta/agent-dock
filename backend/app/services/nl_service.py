@@ -199,6 +199,23 @@ class NaturalLanguageService:
                 ]
             }
 
+            # GitHub action mapping - maps common/intuitive names to actual supported actions
+            github_action_mapping = {
+                "list_repositories": "get_repositories",
+                "get_repos": "get_repositories",
+                "list_repos": "get_repositories",
+                "show_repositories": "get_repositories",
+                "show_repos": "get_repositories",
+                "my_repositories": "get_repositories",
+                "my_repos": "get_repositories",
+                "list_prs": "list_pull_requests",
+                "get_prs": "list_pull_requests",
+                "show_prs": "list_pull_requests",
+                "list_issues": "list_issues",
+                "get_issues": "list_issues",
+                "show_issues": "list_issues",
+            }
+
             # Create a more detailed prompt for GitHub-related queries
             if is_github_related and github_agent_id:
                 # Extract repository name - look for patterns like "in repo X" or "in X repo" or just "X repo"
@@ -216,14 +233,19 @@ class NaturalLanguageService:
                 2. "show PRs in microsoft/vscode" → agent_id: {github_agent_id}, action: "list_pull_requests", parameters: {{"repo": "microsoft/vscode"}}
                 3. "get repository details for user/some-repo" → agent_id: {github_agent_id}, action: "get_repo_details", parameters: {{"repo": "user/some-repo"}}
                 4. "get PR #123 from agent-dock repository" → agent_id: {github_agent_id}, action: "get_pull_request_details", parameters: {{"repo": "agent-dock", "number": 123}}
+                5. "show my github repositories" → agent_id: {github_agent_id}, action: "get_repositories", parameters: {{}}
+                6. "list my repos" → agent_id: {github_agent_id}, action: "get_repositories", parameters: {{}}
+                7. "show github repos" → agent_id: {github_agent_id}, action: "get_repositories", parameters: {{}}
 
                 Important: If you see a repository name without owner (like just "agent-dock"), assume it's a valid repository name.
-                The GitHub agent requires the "repo" parameter for all repository-related operations.
+                The GitHub agent requires the "repo" parameter for all repository-related operations EXCEPT for "get_repositories" which lists all repositories.
+                
+                Supported GitHub actions are: "get_repositories", "list_pull_requests", "get_pull_request_details", "list_issues"
 
                 Please analyze the query and determine:
                 1. Which agent should handle this query (likely GitHub agent)
                 2. What action should be taken
-                3. What parameters are needed (MAKE SURE to include the "repo" parameter)
+                3. What parameters are needed
 
                 IMPORTANT: You must respond with ONLY a valid JSON object, nothing else. No explanations, no code blocks, no other text.
                 JSON RESPONSE FORMAT:
@@ -273,6 +295,12 @@ class NaturalLanguageService:
                 # Parse the response safely
                 action_plan = self._extract_json_from_response(result)
                 logger.info(f"Parsed action plan: {action_plan}")
+                
+                # Map GitHub actions if needed (convert user-friendly names to supported API actions)
+                if action_plan.get("agent_id") == github_agent_id and action_plan.get("action") in github_action_mapping:
+                    action_plan["action"] = github_action_mapping[action_plan["action"]]
+                    logger.info(f"Mapped GitHub action to: {action_plan['action']}")
+                
             except Exception as e:
                 logger.error(f"Error calling language model: {str(e)}")
                 return {

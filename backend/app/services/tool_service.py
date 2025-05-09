@@ -190,6 +190,17 @@ class ToolService:
                 if not repo_name:
                     raise ValueError("Repository name required")
                 
+                # Ensure repo is properly formatted with owner/repo format
+                if "/" not in repo_name:
+                    # If only repo name is provided without owner, try to get user's login
+                    user_response = requests.get("https://api.github.com/user", headers=headers)
+                    user_response.raise_for_status()
+                    owner = user_response.json().get("login")
+                    if owner:
+                        repo_name = f"{owner}/{repo_name}"
+                    else:
+                        raise ValueError("Repository must be in the format 'owner/repo' or user authentication failed")
+                
                 response = requests.get(
                     f"https://api.github.com/repos/{repo_name}", 
                     headers=headers
@@ -201,6 +212,17 @@ class ToolService:
                 repo = params.get("repo")
                 if not repo:
                     raise ValueError("Repository name required")
+                
+                # Ensure repo is properly formatted with owner/repo format
+                if "/" not in repo:
+                    # If only repo name is provided without owner, try to get user's login
+                    user_response = requests.get("https://api.github.com/user", headers=headers)
+                    user_response.raise_for_status()
+                    owner = user_response.json().get("login")
+                    if owner:
+                        repo = f"{owner}/{repo}"
+                    else:
+                        raise ValueError("Repository must be in the format 'owner/repo' or user authentication failed")
                 
                 state = params.get("state", "open")  # open, closed, all
                 sort_by = params.get("sort_by", "created")  # created, updated, popularity, long-running
@@ -279,6 +301,17 @@ class ToolService:
                 
                 if not repo or not pr_number:
                     raise ValueError("Repository name and PR number required")
+                
+                # Ensure repo is properly formatted with owner/repo format
+                if "/" not in repo:
+                    # If only repo name is provided without owner, try to get user's login
+                    user_response = requests.get("https://api.github.com/user", headers=headers)
+                    user_response.raise_for_status()
+                    owner = user_response.json().get("login")
+                    if owner:
+                        repo = f"{owner}/{repo}"
+                    else:
+                        raise ValueError("Repository must be in the format 'owner/repo' or user authentication failed")
                 
                 response = requests.get(
                     f"https://api.github.com/repos/{repo}/pulls/{pr_number}", 

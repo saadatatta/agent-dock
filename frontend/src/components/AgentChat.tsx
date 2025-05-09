@@ -249,87 +249,119 @@ const AgentChat: React.FC = () => {
     e.preventDefault();
     if (!query.trim()) return;
 
-    // Add user message to chat
+    // Add user message to the list
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: `user-${Date.now()}`,
       content: query,
       sender: 'user',
       timestamp: new Date()
     };
-    setMessages(prev => [...prev, userMessage]);
     
-    // Clear input and set loading
+    setMessages(prev => [...prev, userMessage]);
     setQuery('');
     setLoading(true);
-    setError(null);
 
     try {
-      // Check if it's a GitHub related query
-      if (isGitHubQuery(userMessage.content)) {
-        // First try direct GitHub handling
-        const { content, success } = await handleGitHubQuery();
-        
-        // Add GitHub response
-        const gitHubMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content,
-          sender: success ? 'agent' : 'system',
-          timestamp: new Date(),
-          agentName: success ? 'GitHub Agent' : 'System'
-        };
-        
-        setMessages(prev => [...prev, gitHubMessage]);
-        
-        if (success) {
-          setLoading(false);
-          return; // Exit early if GitHub handling succeeded
-        }
-        // If GitHub handling failed, continue with NL processing
-      }
+      // Add a temporary agent message to indicate processing
+      const tempAgentId = `agent-temp-${Date.now()}`;
+      const tempAgentMessage: Message = {
+        id: tempAgentId,
+        content: "Thinking...",
+        sender: 'agent',
+        timestamp: new Date()
+      };
+      
+      setMessages(prev => [...prev, tempAgentMessage]);
 
-      // Send request to NL API
+      // Use the Natural Language processing endpoint to handle the query
       const response = await axios.post('http://localhost:8000/api/v1/nl/query', {
         query: userMessage.content
       });
 
-      if (response.data.status === 'success') {
-        // Format the result
-        let resultContent = '';
-        try {
-          if (typeof response.data.result === 'object') {
-            resultContent = JSON.stringify(response.data.result, null, 2);
+      // Replace the temporary message with the actual response
+      const result = response.data;
+      
+      let responseContent = '';
+      
+      if (result.status === 'success') {
+        // Extract agent information from the result
+        const agentId = result.result?.agent_id || result.action_plan?.agent_id;
+        const agentName = result.result?.agent_name || '';
+        
+        if (result.result?.status === 'success') {
+          // Format successful response
+          if (typeof result.result.result === 'object') {
+            // For GitHib repository response - handle both "repos" and "repositories" keys for backward compatibility
+            if (result.result.result.repos || result.result.result.repositories) {
+              const repos = result.result.result.repos || result.result.result.repositories || [];
+              responseContent = `# GitHub Repositories\n\n`;
+              
+              if (repos.length === 0) {
+                responseContent += "No repositories found.";
+              } else {
+                repos.forEach((repo: any) => {
+                  responseContent += `## [${repo.name}](${repo.html_url || repo.url})\n`;
+                  responseContent += repo.description ? `${repo.description}\n` : '';
+                  responseContent += `- Stars: ${repo.stargazers_count || repo.stars || 0}\n`;
+                  responseContent += `- Forks: ${repo.forks_count || repo.forks || 0}\n`;
+                  responseContent += `- Language: ${repo.language || 'Not specified'}\n\n`;
+                });
+              }
+            }
+            // For other structured responses
+            else {
+              responseContent = `\`\`\`json\n${JSON.stringify(result.result.result, null, 2)}\n\`\`\``;
+            }
           } else {
-            resultContent = String(response.data.result);
+            // For text responses
+            responseContent = result.result.result;
           }
-        } catch (e) {
-          resultContent = 'Received result but unable to format it: ' + String(response.data.result);
+        } else {
+          // Format error response
+          responseContent = `Error: ${result.result?.error || 'Unknown error'}`;
+          
+          // Special handling for GitHub API 404 errors
+          if (responseContent.includes("404") && responseContent.includes("https://api.github.com/repos/")) {
+            responseContent += "\n\nThe repository was not found. Please make sure to use the format 'owner/repo' (e.g., 'microsoft/vscode' not just 'vscode').";
+          }
+          
+          // If there are supported actions, include them
+          if (result.result?.supported_actions) {
+            responseContent += `\n\nSupported actions: ${result.result.supported_actions.join(", ")}`;
+          }
         }
-
-        // Add agent response to chat
-        const agentMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: resultContent,
-          sender: 'agent',
-          timestamp: new Date(),
-          agentId: response.data.action_plan?.agent_id,
-          agentName: response.data.action_plan?.agent_name || 'AI Assistant'
-        };
-        setMessages(prev => [...prev, agentMessage]);
       } else {
-        setError(response.data.message || 'Failed to process query');
+        // Handle error from the NL service
+        responseContent = `Failed to process query: ${result.message || 'Unknown error'}`;
       }
+
+      // Create the final agent message
+      const agentMessage: Message = {
+        id: `agent-${Date.now()}`,
+        content: responseContent,
+        sender: 'agent',
+        timestamp: new Date(),
+        agentId: result.result?.agent_id || result.action_plan?.agent_id,
+        agentName: result.result?.agent_name || 'Assistant'
+      };
+
+      // Replace the temporary message with the final one
+      setMessages(prev => prev.map(msg => 
+        msg.id === tempAgentId ? agentMessage : msg
+      ));
+      
     } catch (error) {
       console.error('Error processing query:', error);
-      setError('Error processing query. Please try again.');
+      setError('Failed to process your query. Please try again.');
       
-      // Add system error message
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: 'Sorry, there was an error processing your query. Please try again later.',
-        sender: 'system',
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      // Update the temporary message to show the error
+      setMessages(prev => prev.map(msg => 
+        msg.id.startsWith('agent-temp') ? {
+          ...msg,
+          content: 'Sorry, I encountered an error while processing your request.',
+          id: `agent-${Date.now()}`
+        } : msg
+      ));
     } finally {
       setLoading(false);
     }
