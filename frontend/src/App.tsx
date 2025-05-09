@@ -9,6 +9,8 @@ import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import BackgroundAnimation from './components/BackgroundAnimation';
 import ToolLogsList from './components/ToolLogsList';
+import Settings from './components/Settings';
+import { ModelsPage } from './components/Models';
 
 // Create a dark theme with futuristic colors
 const theme = createTheme({
@@ -152,6 +154,7 @@ const AnimatedRoutes = () => {
           <Route path="/tools" element={<ToolList />} />
           <Route path="/logs" element={<ToolLogsList />} />
           <Route path="/chat" element={<AgentChat />} />
+          <Route path="/models" element={<ModelsPage />} />
           <Route path="/dashboard" element={
             <Box sx={{ 
               height: '100%', 
@@ -193,47 +196,7 @@ const AnimatedRoutes = () => {
               </motion.div>
             </Box>
           } />
-          <Route path="/settings" element={
-            <Box sx={{ 
-              height: '100%', 
-              display: 'flex', 
-              flexDirection: 'column',
-              alignItems: 'center', 
-              justifyContent: 'center',
-              textAlign: 'center',
-              p: 5
-            }}>
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-              >
-                <Typography variant="h3" component="h1" sx={{ mb: 2, fontWeight: 700 }}>
-                  Settings
-                </Typography>
-                <Typography variant="h6" sx={{ mb: 4, color: 'text.secondary' }}>
-                  This feature is coming soon
-                </Typography>
-                <motion.div
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                >
-                  <Button 
-                    variant="contained" 
-                    color="secondary" 
-                    component={Link} 
-                    to="/"
-                    sx={{
-                      background: 'linear-gradient(45deg, #FF00FF, #CC00FF)',
-                      boxShadow: '0 4px 20px 0 rgba(255,0,255,0.25)',
-                    }}
-                  >
-                    Back to Agents
-                  </Button>
-                </motion.div>
-              </motion.div>
-            </Box>
-          } />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </motion.div>
     </AnimatePresence>

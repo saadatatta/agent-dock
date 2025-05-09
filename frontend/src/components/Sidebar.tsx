@@ -7,7 +7,8 @@ import {
   Chat as ChatIcon,
   Dashboard as DashboardIcon,
   Settings as SettingsIcon,
-  Storage as StorageIcon
+  Storage as StorageIcon,
+  Psychology as PsychologyIcon
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import LogoAnimation from './LogoAnimation';
@@ -27,6 +28,7 @@ const Sidebar: React.FC<SidebarProps> = ({ drawerWidth, mobileOpen, handleDrawer
     { text: 'Tools', icon: <BuildIcon />, path: '/tools' },
     { text: 'Tool Logs', icon: <StorageIcon />, path: '/logs' },
     { text: 'Chat', icon: <ChatIcon />, path: '/chat' },
+    { text: 'Models', icon: <PsychologyIcon />, path: '/models' },
   ];
   
   const secondaryMenuItems = [

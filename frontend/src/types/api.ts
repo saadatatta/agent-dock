@@ -12,8 +12,8 @@ export interface Tool {
   id: number;
   name: string;
   description: string;
-  api_endpoint: string;
-  parameters: Record<string, any>;
+  type: string;
+  config: Record<string, any>;
   is_active: boolean;
 }
 
@@ -29,6 +29,26 @@ export interface ToolLog {
   tool?: Tool;
 }
 
+export interface Setting {
+  id: number;
+  key: string;
+  value: any;
+  description?: string;
+  is_secret: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LLMModel {
+  key: string;
+  provider: string;
+  model_name: string;
+  api_key_env_var: string;
+  parameters: Record<string, any>;
+  is_active: boolean;
+  api_key_available: boolean;
+}
+
 export interface ApiResponse<T> {
   status: string;
   data: T;
@@ -41,4 +61,11 @@ export interface PaginatedResponse<T> {
   total: number;
   skip: number;
   limit: number;
+}
+
+export interface LLMModelsResponse {
+  status: string;
+  data: LLMModel[];
+  active_model: string;
+  message?: string;
 } 
