@@ -70,18 +70,38 @@ class NaturalLanguageService:
         except json.JSONDecodeError:
             # If that fails, try to extract JSON using regex
             try:
+                # Try to find JSON content within triple backticks (common in markdown)
+                json_match = re.search(r'```(?:json)?\s*({.*?}|[\[\{][\s\S]*?[\]\}])\s*```', text, re.DOTALL)
+                if json_match:
+                    json_content = json_match.group(1).strip()
+                    return json.loads(json_content)
+                
                 # Find content between curly braces (including nested ones)
-                json_match = re.search(r'({.*})', text, re.DOTALL)
+                json_match = re.search(r'({[\s\S]*?})(?:\s|$)', text, re.DOTALL)
                 if json_match:
-                    return json.loads(json_match.group(1))
+                    json_content = json_match.group(1).strip()
+                    logger.debug(f"Extracted JSON with curly braces: {json_content}")
+                    return json.loads(json_content)
+                
                 # If no curly braces, try square brackets for arrays
-                json_match = re.search(r'(\[.*\])', text, re.DOTALL)
+                json_match = re.search(r'(\[[\s\S]*?\])(?:\s|$)', text, re.DOTALL)
                 if json_match:
-                    return json.loads(json_match.group(1))
+                    json_content = json_match.group(1).strip()
+                    logger.debug(f"Extracted JSON with square brackets: {json_content}")
+                    return json.loads(json_content)
+                
+                # Last attempt - find anything that looks like JSON
+                json_match = re.search(r'([\{\[][\s\S]*?[\}\]])(?:\s|$)', text, re.DOTALL)
+                if json_match:
+                    json_content = json_match.group(1).strip()
+                    logger.debug(f"Extracted potential JSON content: {json_content}")
+                    return json.loads(json_content)
+                
+                logger.error(f"Could not extract valid JSON from response: {text[:200]}...")
                 raise ValueError("Could not extract valid JSON from response")
             except Exception as e:
                 logger.error(f"Failed to extract JSON from response: {e}")
-                logger.debug(f"Response text: {text}")
+                logger.debug(f"Response text: {text[:200]}...")
                 # Return a default response as fallback
                 return {"agent_id": None, "action": "default", "parameters": {}}
 
@@ -104,7 +124,9 @@ class NaturalLanguageService:
                     temperature=parameters.get("temperature", 0.1),
                     max_tokens=parameters.get("max_tokens", 1000)
                 )
-                return response.choices[0].message.content
+                content = response.choices[0].message.content
+                logger.debug(f"Raw response from {provider}/{model_name}: {content[:100]}...")
+                return content
                 
             elif provider == "openai":
                 client = self._initialize_llm_client(provider)
@@ -114,7 +136,9 @@ class NaturalLanguageService:
                     temperature=parameters.get("temperature", 0.1),
                     max_tokens=parameters.get("max_tokens", 1000)
                 )
-                return response.choices[0].message.content
+                content = response.choices[0].message.content
+                logger.debug(f"Raw response from {provider}/{model_name}: {content[:100]}...")
+                return content
                 
             elif provider == "anthropic":
                 client = self._initialize_llm_client(provider)
@@ -128,7 +152,9 @@ class NaturalLanguageService:
                     temperature=parameters.get("temperature", 0.1),
                     max_tokens=parameters.get("max_tokens", 1000)
                 )
-                return response.content[0].text
+                content = response.content[0].text
+                logger.debug(f"Raw response from {provider}/{model_name}: {content[:100]}...")
+                return content
                 
             else:
                 raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -179,10 +205,11 @@ class NaturalLanguageService:
             2. What action should be taken
             3. What parameters are needed
 
-            Respond in JSON format:
+            IMPORTANT: You must respond with ONLY a valid JSON object, nothing else. No explanations, no code blocks, no other text.
+            JSON RESPONSE FORMAT:
             {{
-                "agent_id": <agent_id>,
-                "action": <action_name>,
+                "agent_id": <agent_id or null if no suitable agent>,
+                "action": <action_name or "default" if no specific action>,
                 "parameters": {{
                     <parameter_name>: <parameter_value>
                 }}
@@ -194,7 +221,7 @@ class NaturalLanguageService:
                 result = self._get_llm_response(
                     db,
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that processes natural language queries and converts them into structured actions."},
+                        {"role": "system", "content": "You are a helpful API response generator that ONLY outputs valid JSON. Never explain your reasoning or add any text outside the JSON. Even if you're uncertain, make a best guess and include it in the JSON structure."},
                         {"role": "user", "content": prompt}
                     ]
                 )
@@ -255,7 +282,9 @@ class NaturalLanguageService:
             User Query: {query}
 
             Please suggest the most suitable agents for this query.
-            Respond in JSON format:
+            
+            IMPORTANT: You must respond with ONLY a valid JSON array, nothing else. No explanations, no code blocks, no other text.
+            JSON RESPONSE FORMAT:
             [
                 {{
                     "agent_id": <agent_id>,
@@ -269,7 +298,7 @@ class NaturalLanguageService:
                 result = self._get_llm_response(
                     db,
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that suggests suitable agents for user queries."},
+                        {"role": "system", "content": "You are a helpful API response generator that ONLY outputs valid JSON. Never explain your reasoning or add any text outside the JSON. Even if you're uncertain, make a best guess and include it in the JSON structure."},
                         {"role": "user", "content": prompt}
                     ]
                 )
