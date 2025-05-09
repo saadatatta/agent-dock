@@ -327,12 +327,12 @@ class NaturalLanguageService:
             agents = self.agent_service.get_agents(db)
             tools = self.tool_service.get_tools(db)
 
-            # Find the GitHub agent if it exists
-            github_agent = next((agent for agent in agents if "github" in agent.name.lower()), None)
+            # Find the GitHub agent if it exists and is active
+            github_agent = next((agent for agent in agents if "github" in agent.name.lower() and agent.is_active), None)
             github_agent_id = github_agent.id if github_agent else None
             
-            # Find the Slack agent if it exists
-            slack_agent = next((agent for agent in agents if "slack" in agent.name.lower()), None)
+            # Find the Slack agent if it exists and is active
+            slack_agent = next((agent for agent in agents if "slack" in agent.name.lower() and agent.is_active), None)
             slack_agent_id = slack_agent.id if slack_agent else None
 
             # Check if this is a GitHub repository-related query
@@ -340,6 +340,11 @@ class NaturalLanguageService:
             
             # Check if this is a Slack message-related query
             is_slack_related = any(keyword in query.lower() for keyword in ["slack", "message", "send", "post", "channel", "dm", "direct message"])
+            
+            # Get model configuration
+            model_key, model_config = self.settings_service.get_active_llm_model(db)
+            provider = model_config.get("provider", "groq")
+            model_name = model_config.get("model_name", "llama-3.3-70b-versatile")
             
             # Create context for the LLM
             context = {
@@ -501,6 +506,44 @@ class NaturalLanguageService:
                 provider = model_config.get("provider", "groq")
                 model_name = model_config.get("model_name", "llama-3.3-70b-versatile")
                 
+                # If this is a GitHub-related query but the GitHub agent is disabled, return a user-friendly message
+                if is_github_related and not github_agent_id:
+                    return {
+                        "status": "error",
+                        "message": "GitHub agent is disabled. Please enable it in the agents section to use GitHub features.",
+                        "human_readable": "The GitHub agent is currently disabled. Please enable it in the Agents management section to use GitHub-related features.",
+                        "model_info": {
+                            "provider": provider,
+                            "model": model_name
+                        },
+                        "token_usage": {
+                            "provider": provider,
+                            "model": model_name,
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "total_tokens": 0
+                        }
+                    }
+                
+                # If this is a Slack-related query but the Slack agent is disabled, return a user-friendly message
+                if is_slack_related and not slack_agent_id:
+                    return {
+                        "status": "error",
+                        "message": "Slack agent is disabled. Please enable it in the agents section to use Slack features.",
+                        "human_readable": "The Slack agent is currently disabled. Please enable it in the Agents management section to use Slack-related features.",
+                        "model_info": {
+                            "provider": provider,
+                            "model": model_name
+                        },
+                        "token_usage": {
+                            "provider": provider,
+                            "model": model_name,
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "total_tokens": 0
+                        }
+                    }
+                
                 result, usage_data = self._get_llm_response(
                     db,
                     messages=[
@@ -512,6 +555,38 @@ class NaturalLanguageService:
                 # Parse the response safely
                 action_plan = self._extract_json_from_response(result)
                 logger.info(f"Parsed action plan: {action_plan}")
+                
+                # If this is a GitHub-related query but no agent_id was assigned, check if the GitHub agent exists but is disabled
+                if is_github_related and not action_plan.get("agent_id") and not github_agent_id:
+                    # Find any inactive GitHub agent
+                    inactive_github_agent = next((agent for agent in agents if "github" in agent.name.lower() and not agent.is_active), None)
+                    if inactive_github_agent:
+                        return {
+                            "status": "error",
+                            "message": f"The GitHub agent is disabled. Please enable it in the agents section to use GitHub features.",
+                            "human_readable": f"The GitHub agent is currently disabled. Please enable it in the Agents management section to use GitHub-related features.",
+                            "model_info": {
+                                "provider": provider,
+                                "model": model_name
+                            },
+                            "token_usage": usage_data
+                        }
+                
+                # Similar check for Slack-related queries
+                if is_slack_related and not action_plan.get("agent_id") and not slack_agent_id:
+                    # Find any inactive Slack agent
+                    inactive_slack_agent = next((agent for agent in agents if "slack" in agent.name.lower() and not agent.is_active), None)
+                    if inactive_slack_agent:
+                        return {
+                            "status": "error",
+                            "message": f"The Slack agent is disabled. Please enable it in the agents section to use Slack features.",
+                            "human_readable": f"The Slack agent is currently disabled. Please enable it in the Agents management section to use Slack-related features.",
+                            "model_info": {
+                                "provider": provider,
+                                "model": model_name
+                            },
+                            "token_usage": usage_data
+                        }
                 
                 # Map GitHub actions if needed
                 if action_plan.get("agent_id") == github_agent_id and action_plan.get("action") in github_action_mapping:
@@ -539,6 +614,19 @@ class NaturalLanguageService:
                 agent = self.agent_service.get_agent(db, action_plan["agent_id"])
                 if not agent:
                     raise ValueError(f"Agent {action_plan['agent_id']} not found")
+                    
+                # Check if the agent is active
+                if not agent.is_active:
+                    return {
+                        "status": "error",
+                        "message": f"The {agent.name} agent is disabled. Please enable it in the agents section to use its features.",
+                        "human_readable": f"The {agent.name} agent is currently disabled. Please enable it in the Agents management section to use its features.",
+                        "model_info": {
+                            "provider": provider,
+                            "model": model_name
+                        },
+                        "token_usage": usage_data
+                    }
 
                 # Execute the agent with the action plan
                 result = self.agent_service.execute_agent(
