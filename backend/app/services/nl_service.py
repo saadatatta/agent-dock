@@ -152,12 +152,25 @@ class NaturalLanguageService:
             # If this is a Slack response
             if "channel" in response_data:
                 channel = response_data.get("channel", "")
-                ok = response_data.get("ok", False)
                 
-                if ok:
+                # First, check if 'sent' field is present (our Slack Agent uses this)
+                if "sent" in response_data and response_data["sent"]:
                     return f"Message successfully sent to {channel} channel."
+                    
+                # Next, check direct "ok" field (direct Slack API responses)
+                elif response_data.get("ok", False):
+                    return f"Message successfully sent to {channel} channel."
+                
+                # Finally, check if "ok" is nested in "details" (our Slack Agent structure)
+                elif "details" in response_data and isinstance(response_data["details"], dict) and response_data["details"].get("ok", False):
+                    return f"Message successfully sent to {channel} channel."
+                    
+                # If none of the above, it's an error
                 else:
                     error = response_data.get("error", "unknown error")
+                    # Try to get error from details if it exists
+                    if "details" in response_data and isinstance(response_data["details"], dict) and "error" in response_data["details"]:
+                        error = response_data["details"]["error"]
                     return f"Failed to send message to {channel} channel: {error}"
             
             # Generic response formatter for other data types
