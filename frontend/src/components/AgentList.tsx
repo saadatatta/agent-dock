@@ -27,7 +27,10 @@ import {
   MenuItem,
   OutlinedInput,
   Checkbox,
-  ListItemText
+  ListItemText,
+  Switch,
+  FormControlLabel,
+  FormGroup
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -38,7 +41,8 @@ import {
   MoreVert as MoreVertIcon,
   PlayArrow as PlayArrowIcon,
   BugReport as PullRequestIcon,
-  Storage as RepositoryIcon
+  Storage as RepositoryIcon,
+  PowerSettingsNew as PowerIcon
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { agentApi, toolApi } from '../services/api';
@@ -286,6 +290,21 @@ const AgentList: React.FC = () => {
     setFormData({ ...formData, tools: selectedTools });
   };
 
+  // Function to toggle agent active status
+  const handleToggleAgentStatus = async (agent: Agent, event: React.MouseEvent) => {
+    // Prevent the card click from triggering
+    event.stopPropagation();
+    
+    try {
+      await agentApi.updateAgent(agent.id, { is_active: !agent.is_active });
+      setSuccess(`Agent ${!agent.is_active ? 'activated' : 'deactivated'} successfully`);
+      fetchAgents();
+    } catch (error) {
+      setError('Failed to update agent status');
+      console.error('Error updating agent status:', error);
+    }
+  };
+
   return (
     <Box sx={{ position: 'relative' }}>
       <Backdrop
@@ -295,7 +314,7 @@ const AgentList: React.FC = () => {
         <CircularProgress color="primary" />
       </Backdrop>
       
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, mt: 4 }}>
         <Typography 
           variant="h4" 
           component={motion.h1}
@@ -392,9 +411,36 @@ const AgentList: React.FC = () => {
                         transform: 'translateY(-5px)',
                         boxShadow: '0 12px 40px rgba(0, 0, 0, 0.3)',
                         border: '1px solid rgba(255, 255, 255, 0.2)',
-                      }
+                      },
+                      opacity: agent.is_active ? 1 : 0.7
                     }}
                   >
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        top: -20,
+                        right: 20,
+                        zIndex: 1,
+                      }}
+                    >
+                      <Tooltip title={agent.is_active ? "Deactivate Agent" : "Activate Agent"}>
+                        <IconButton
+                          onClick={(e) => handleToggleAgentStatus(agent, e)}
+                          sx={{
+                            backgroundColor: agent.is_active ? 'success.main' : 'grey.700',
+                            color: 'white',
+                            '&:hover': {
+                              backgroundColor: agent.is_active ? 'success.dark' : 'grey.600',
+                            },
+                            width: 40,
+                            height: 40,
+                          }}
+                        >
+                          <PowerIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                    
                     <Box
                       sx={{
                         position: 'absolute',
@@ -417,7 +463,7 @@ const AgentList: React.FC = () => {
                       {getAgentIcon(agent)}
                     </Box>
                     
-                    <CardContent sx={{ p: 3, pt: 5, flexGrow: 1 }}>
+                    <CardContent sx={{ p: 3, pt: 5, flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <Typography variant="h5" component="h2" gutterBottom sx={{ fontWeight: 600, color: 'white' }}>
                           {agent.name}
@@ -444,28 +490,40 @@ const AgentList: React.FC = () => {
                       <Typography 
                         variant="body2" 
                         color="text.secondary" 
-                        sx={{ mb: 2, minHeight: 40, color: 'grey.400' }}
+                        sx={{ 
+                          mb: 2, 
+                          height: 60, 
+                          overflow: 'hidden',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical',
+                          color: 'grey.400' 
+                        }}
                       >
                         {agent.description || 'No description provided'}
                       </Typography>
                       
-                      <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
-                        {agent.tools.map(tool => (
-                          <Chip 
-                            key={tool.id} 
-                            label={tool.name}
-                            size="small"
-                            icon={tool.type === 'github' ? <GitHubIcon /> : <CodeIcon />}
-                            sx={{ 
-                              bgcolor: 'rgba(255, 255, 255, 0.1)', 
-                              color: 'grey.300',
-                              borderRadius: 1
-                            }} 
-                          />
-                        ))}
-                      </Stack>
-                      
-                      {getGitHubActions(agent)}
+                      <Box sx={{ mt: 'auto' }}>
+                        <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', gap: 1, minHeight: 32 }}>
+                          {agent.tools.map(tool => (
+                            <Chip 
+                              key={tool.id} 
+                              label={tool.name}
+                              size="small"
+                              icon={tool.type === 'github' ? <GitHubIcon /> : <CodeIcon />}
+                              sx={{ 
+                                bgcolor: 'rgba(255, 255, 255, 0.1)', 
+                                color: 'grey.300',
+                                borderRadius: 1
+                              }} 
+                            />
+                          ))}
+                        </Stack>
+                        
+                        <Box sx={{ minHeight: 40 }}>
+                          {getGitHubActions(agent)}
+                        </Box>
+                      </Box>
                     </CardContent>
                   </Card>
                 </Grid>
@@ -526,6 +584,19 @@ const AgentList: React.FC = () => {
                 }
               }}
             />
+            
+            <FormGroup sx={{ my: 2 }}>
+              <FormControlLabel
+                control={
+                  <Switch 
+                    checked={formData.is_active}
+                    onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                    color="success"
+                  />
+                }
+                label="Agent Active"
+              />
+            </FormGroup>
             
             {/* Tool Selection */}
             <FormControl 

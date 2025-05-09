@@ -24,7 +24,10 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  FormHelperText
+  FormHelperText,
+  Switch,
+  FormControlLabel,
+  FormGroup
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -35,7 +38,8 @@ import {
   Api as ApiIcon,
   GitHub as GitHubIcon,
   Storage as RepositoryIcon,
-  BugReport as PullRequestIcon
+  BugReport as PullRequestIcon,
+  PowerSettingsNew as PowerIcon
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toolApi } from '../services/api';
@@ -184,6 +188,21 @@ const ToolList: React.FC = () => {
     }
   };
 
+  // Function to toggle tool active status
+  const handleToggleToolStatus = async (tool: Tool, event: React.MouseEvent) => {
+    // Prevent the card click from triggering
+    event.stopPropagation();
+    
+    try {
+      await toolApi.updateTool(tool.id, { is_active: !tool.is_active });
+      setSuccess(`Tool ${!tool.is_active ? 'activated' : 'deactivated'} successfully`);
+      fetchTools();
+    } catch (error) {
+      setError('Failed to update tool status');
+      console.error('Error updating tool status:', error);
+    }
+  };
+
   // Animation variants
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -226,7 +245,7 @@ const ToolList: React.FC = () => {
         <CircularProgress color="primary" />
       </Backdrop>
       
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, mt: 4 }}>
         <Typography 
           variant="h4" 
           component={motion.h1}
@@ -321,8 +340,36 @@ const ToolList: React.FC = () => {
                         flexDirection: 'column',
                         position: 'relative',
                         overflow: 'visible',
+                        opacity: tool.is_active ? 1 : 0.7,
+                        transition: 'all 0.3s ease'
                       }}
                     >
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          top: -15,
+                          right: 20,
+                          zIndex: 10,
+                        }}
+                      >
+                        <Tooltip title={tool.is_active ? "Deactivate Tool" : "Activate Tool"}>
+                          <IconButton
+                            onClick={(e) => handleToggleToolStatus(tool, e)}
+                            sx={{
+                              backgroundColor: tool.is_active ? 'success.main' : 'grey.700',
+                              color: 'white',
+                              '&:hover': {
+                                backgroundColor: tool.is_active ? 'success.dark' : 'grey.600',
+                              },
+                              width: 36,
+                              height: 36,
+                            }}
+                          >
+                            <PowerIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Box>
+                      
                       <Box
                         sx={{
                           position: 'absolute',
@@ -504,6 +551,18 @@ const ToolList: React.FC = () => {
                 }
               }}
             />
+            <FormGroup sx={{ my: 2 }}>
+              <FormControlLabel
+                control={
+                  <Switch 
+                    checked={formData.is_active}
+                    onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                    color="success"
+                  />
+                }
+                label="Tool Active"
+              />
+            </FormGroup>
             <FormControl fullWidth margin="normal" variant="outlined">
               <InputLabel id="tool-type-label">Type</InputLabel>
               <Select
