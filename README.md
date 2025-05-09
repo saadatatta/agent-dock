@@ -39,7 +39,12 @@ cd agent-dock
 docker-compose up --build
 ```
 
-3. Access the application:
+3. Setup the database with necessary initial data:
+```bash
+./setup_db.sh
+```
+
+4. Access the application:
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000
 - API Documentation: http://localhost:8000/docs
@@ -187,34 +192,33 @@ npm install
 npm start
 ```
 
-## Environment Variables
+## Database Management
 
-Create a `.env` file in the backend directory with the following variables:
+### Resetting and Setting up the Database
 
-```env
-DATABASE_URL=postgresql://user:password@localhost:5432/agentdock
-GROQ_API_KEY=your_groq_api_key
-OPENAI_API_KEY=your_openai_api_key
-ANTHROPIC_API_KEY=your_anthropic_api_key
-GITHUB_TOKEN=your_github_token
-SLACK_TOKEN=your_slack_token
-JIRA_TOKEN=your_jira_token
+If you need to reset the database and populate it with necessary initial data:
+
+```bash
+# From the project root
+./setup_db.sh
 ```
 
-## API Documentation
+This script will:
+1. Reset the database (drop all tables and recreate them)
+2. Create required tools (GitHub API, Slack API, Jira API, etc.)
+3. Create default agents and link them to appropriate tools
+4. Add required settings entries
 
-Once the application is running, you can access the API documentation at:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+### Manual Database Operations
 
-## Contributing
+If you need to perform manual operations:
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+```bash
+# Reset database only (drop all tables and recreate them)
+docker exec -it agent-dock-backend python /app/reset_db.py
 
-## License
+# Initialize database schema without dropping tables
+docker exec -it agent-dock-backend python /app/init_db.py
+```
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+## Environment Variables
