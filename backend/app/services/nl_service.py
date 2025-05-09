@@ -173,9 +173,16 @@ class NaturalLanguageService:
             # Find the GitHub agent if it exists
             github_agent = next((agent for agent in agents if "github" in agent.name.lower()), None)
             github_agent_id = github_agent.id if github_agent else None
+            
+            # Find the Slack agent if it exists
+            slack_agent = next((agent for agent in agents if "slack" in agent.name.lower()), None)
+            slack_agent_id = slack_agent.id if slack_agent else None
 
             # Check if this is a GitHub repository-related query
             is_github_related = any(keyword in query.lower() for keyword in ["github", "repo", "repository", "pull request", "pr", "issue", "commit"])
+            
+            # Check if this is a Slack message-related query
+            is_slack_related = any(keyword in query.lower() for keyword in ["slack", "message", "send", "post", "channel", "dm", "direct message"])
             
             # Create context for the LLM
             context = {
@@ -214,6 +221,17 @@ class NaturalLanguageService:
                 "list_issues": "list_issues",
                 "get_issues": "list_issues",
                 "show_issues": "list_issues",
+            }
+            
+            # Slack action mapping - maps common/intuitive names to actual supported actions
+            slack_action_mapping = {
+                "send_message": "send_message",
+                "post_message": "send_message",
+                "send": "send_message",
+                "post": "send_message",
+                "message": "send_message",
+                "slack_message": "send_message",
+                "dm": "send_message"
             }
 
             # Create a more detailed prompt for GitHub-related queries
@@ -257,8 +275,46 @@ class NaturalLanguageService:
                     }}
                 }}
                 """
+            # Create a detailed prompt for Slack-related queries
+            elif is_slack_related and slack_agent_id:
+                prompt = f"""
+                Context:
+                Available Agents: {context['available_agents']}
+                Available Tools: {context['available_tools']}
+
+                User Query: {query}
+
+                This appears to be a Slack-related query. You need to extract:
+                1. The channel name to send the message to
+                2. The message content to send
+
+                Here are some examples of how to parse Slack queries:
+                1. "send message to #general saying hello world" → agent_id: {slack_agent_id}, action: "send_message", parameters: {{"channel": "#general", "message": "hello world"}}
+                2. "post 'meeting at 3pm' in the team-updates channel" → agent_id: {slack_agent_id}, action: "send_message", parameters: {{"channel": "team-updates", "message": "meeting at 3pm"}}
+                3. "send 'project completed' to hackathon-channel" → agent_id: {slack_agent_id}, action: "send_message", parameters: {{"channel": "hackathon-channel", "message": "project completed"}}
+
+                Important: For channel names, don't include the # symbol unless it's explicitly in the query.
+                The Slack agent requires both "channel" and "message" parameters for all message operations.
+
+                Supported Slack actions are: "send_message"
+
+                Please analyze the query and determine:
+                1. Which agent should handle this query (the Slack agent)
+                2. What action should be taken (send_message)
+                3. What parameters are needed (channel and message)
+
+                IMPORTANT: You must respond with ONLY a valid JSON object, nothing else. No explanations, no code blocks, no other text.
+                JSON RESPONSE FORMAT:
+                {{
+                    "agent_id": <agent_id or null if no suitable agent>,
+                    "action": <action_name or "default" if no specific action>,
+                    "parameters": {{
+                        <parameter_name>: <parameter_value>
+                    }}
+                }}
+                """
             else:
-                # Standard prompt for non-GitHub queries
+                # Standard prompt for non-GitHub, non-Slack queries
                 prompt = f"""
                 Context:
                 Available Agents: {context['available_agents']}
@@ -296,10 +352,15 @@ class NaturalLanguageService:
                 action_plan = self._extract_json_from_response(result)
                 logger.info(f"Parsed action plan: {action_plan}")
                 
-                # Map GitHub actions if needed (convert user-friendly names to supported API actions)
+                # Map GitHub actions if needed
                 if action_plan.get("agent_id") == github_agent_id and action_plan.get("action") in github_action_mapping:
                     action_plan["action"] = github_action_mapping[action_plan["action"]]
                     logger.info(f"Mapped GitHub action to: {action_plan['action']}")
+                
+                # Map Slack actions if needed
+                if action_plan.get("agent_id") == slack_agent_id and action_plan.get("action") in slack_action_mapping:
+                    action_plan["action"] = slack_action_mapping[action_plan["action"]]
+                    logger.info(f"Mapped Slack action to: {action_plan['action']}")
                 
             except Exception as e:
                 logger.error(f"Error calling language model: {str(e)}")
