@@ -20,7 +20,14 @@ import {
   CircularProgress,
   Backdrop,
   Tooltip,
-  Avatar
+  Avatar,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  OutlinedInput,
+  Checkbox,
+  ListItemText
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -34,7 +41,7 @@ import {
   Storage as RepositoryIcon
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
-import { agentApi } from '../services/api';
+import { agentApi, toolApi } from '../services/api';
 import { Agent, Tool } from '../types/api';
 
 const AgentList: React.FC = () => {
@@ -53,9 +60,11 @@ const AgentList: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [availableTools, setAvailableTools] = useState<Tool[]>([]);
 
   useEffect(() => {
     fetchAgents();
+    fetchTools();
   }, []);
 
   const fetchAgents = async () => {
@@ -72,6 +81,16 @@ const AgentList: React.FC = () => {
       setError('Failed to fetch agents');
       console.error('Error fetching agents:', error);
       setLoading(false);
+    }
+  };
+
+  const fetchTools = async () => {
+    try {
+      const response = await toolApi.getTools();
+      setAvailableTools(response.data);
+    } catch (error) {
+      setError('Failed to fetch tools');
+      console.error('Error fetching tools:', error);
     }
   };
 
@@ -107,11 +126,38 @@ const AgentList: React.FC = () => {
 
   const handleSubmit = async () => {
     try {
+      let savedAgent;
       if (editingAgent) {
-        await agentApi.updateAgent(editingAgent.id, formData);
+        savedAgent = await agentApi.updateAgent(editingAgent.id, formData);
+        
+        // Get current tools
+        const currentToolIds = new Set(editingAgent.tools.map(tool => tool.id));
+        const newToolIds = new Set(formData.tools.map(tool => tool.id));
+        
+        // Add new tools
+        for (const tool of formData.tools) {
+          if (!currentToolIds.has(tool.id)) {
+            await agentApi.addToolToAgent(editingAgent.id, tool.id);
+          }
+        }
+        
+        // Remove removed tools
+        for (const tool of editingAgent.tools) {
+          if (!newToolIds.has(tool.id)) {
+            await agentApi.removeToolFromAgent(editingAgent.id, tool.id);
+          }
+        }
+        
         setSuccess('Agent updated successfully');
       } else {
-        await agentApi.createAgent(formData);
+        savedAgent = await agentApi.createAgent(formData);
+        
+        // Add tools to the newly created agent
+        const agentId = savedAgent.data.id;
+        for (const tool of formData.tools) {
+          await agentApi.addToolToAgent(agentId, tool.id);
+        }
+        
         setSuccess('Agent created successfully');
       }
       handleClose();
@@ -231,6 +277,13 @@ const AgentList: React.FC = () => {
       console.error('Error executing agent action:', error);
       setLoading(false);
     }
+  };
+
+  // Helper function to handle tool selection changes
+  const handleToolChange = (event: React.ChangeEvent<{ value: unknown }>) => {
+    const selectedToolIds = event.target.value as number[];
+    const selectedTools = availableTools.filter(tool => selectedToolIds.includes(tool.id));
+    setFormData({ ...formData, tools: selectedTools });
   };
 
   return (
@@ -473,6 +526,63 @@ const AgentList: React.FC = () => {
                 }
               }}
             />
+            
+            {/* Tool Selection */}
+            <FormControl 
+              fullWidth 
+              margin="normal" 
+              variant="outlined"
+              sx={{ mt: 2 }}
+            >
+              <InputLabel id="tool-selection-label">Bind Tools</InputLabel>
+              <Select
+                labelId="tool-selection-label"
+                id="tool-selection"
+                multiple
+                value={formData.tools.map(tool => tool.id)}
+                onChange={(e) => handleToolChange(e as any)}
+                input={
+                  <OutlinedInput 
+                    label="Bind Tools" 
+                    sx={{ 
+                      borderRadius: 2, 
+                      background: 'rgba(0, 0, 0, 0.2)',
+                    }}
+                  />
+                }
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {(selected as number[]).map((value) => {
+                      const tool = availableTools.find(t => t.id === value);
+                      return tool ? (
+                        <Chip 
+                          key={value} 
+                          label={tool.name} 
+                          size="small"
+                          icon={tool.type === 'github' ? <GitHubIcon /> : <CodeIcon />}
+                          sx={{ 
+                            bgcolor: 'rgba(255, 255, 255, 0.1)', 
+                            color: 'grey.300',
+                            borderRadius: 1
+                          }}
+                        />
+                      ) : null;
+                    })}
+                  </Box>
+                )}
+              >
+                {availableTools.map((tool) => (
+                  <MenuItem key={tool.id} value={tool.id}>
+                    <Checkbox checked={formData.tools.some(t => t.id === tool.id)} />
+                    <ListItemText 
+                      primary={tool.name} 
+                      secondary={tool.type.charAt(0).toUpperCase() + tool.type.slice(1)}
+                    />
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            
             <TextField
               fullWidth
               label="Code"
