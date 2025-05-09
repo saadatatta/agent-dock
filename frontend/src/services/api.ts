@@ -79,19 +79,19 @@ export const toolApi = {
   },
 
   getToolLogs: async (toolId: number, skip = 0, limit = 10): Promise<PaginatedResponse<ToolLog>> => {
-    const response = await api.get(`/tools/${toolId}/logs?skip=${skip}&limit=${limit}`);
+    const response = await api.get(`/logs/tool/${toolId}?skip=${skip}&limit=${limit}`);
     return response.data;
   },
 };
 
 export const logApi = {
   getAllLogs: async (skip = 0, limit = 10): Promise<PaginatedResponse<ToolLog>> => {
-    const response = await api.get(`/tools/logs?skip=${skip}&limit=${limit}`);
+    const response = await api.get(`/logs/?skip=${skip}&limit=${limit}`);
     return response.data;
   },
 
   deleteLog: async (logId: number): Promise<ApiResponse<ToolLog>> => {
-    const response = await api.delete(`/tools/logs/${logId}`);
+    const response = await api.delete(`/logs/${logId}`);
     return response.data;
   }
 };

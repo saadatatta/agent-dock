@@ -17,6 +17,7 @@ import os
 import requests
 
 router = APIRouter()
+logs_router = APIRouter()
 tool_service = ToolService()
 
 @router.post("/", response_model=ToolResponse, status_code=status.HTTP_201_CREATED)
@@ -100,23 +101,7 @@ async def delete_tool(tool_id: int, db: Session = Depends(get_db)):
         message="Tool deleted successfully"
     )
 
-@router.get("/{tool_id}/logs", response_model=ToolLogListResponse)
-async def get_tool_logs(
-    tool_id: int,
-    skip: int = 0,
-    limit: int = 10,
-    db: Session = Depends(get_db)
-):
-    """Get logs for a specific tool"""
-    logs = tool_service.get_tool_logs(db, tool_id, skip=skip, limit=limit)
-    return ToolLogListResponse(
-        status="success",
-        data=logs,
-        total=len(logs),
-        message="Tool logs retrieved successfully"
-    )
-
-@router.get("/logs", response_model=ToolLogListResponse)
+@logs_router.get("/", response_model=ToolLogListResponse)
 async def get_all_logs(
     skip: int = 0,
     limit: int = 10,
@@ -132,7 +117,23 @@ async def get_all_logs(
         message="All tool logs retrieved successfully"
     )
 
-@router.delete("/logs/{log_id}", response_model=ToolLogResponse)
+@logs_router.get("/tool/{tool_id}", response_model=ToolLogListResponse)
+async def get_tool_logs(
+    tool_id: int,
+    skip: int = 0,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """Get logs for a specific tool"""
+    logs = tool_service.get_tool_logs(db, tool_id, skip=skip, limit=limit)
+    return ToolLogListResponse(
+        status="success",
+        data=logs,
+        total=len(logs),
+        message="Tool logs retrieved successfully"
+    )
+
+@logs_router.delete("/{log_id}", response_model=ToolLogResponse)
 async def delete_log(
     log_id: int,
     db: Session = Depends(get_db)

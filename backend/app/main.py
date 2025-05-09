@@ -46,6 +46,7 @@ app.add_middleware(
 # Include routers
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["Tools"])
+app.include_router(tools.logs_router, prefix="/api/v1/logs", tags=["Logs"])
 app.include_router(nl.router, prefix="/api/v1/nl", tags=["Natural Language"])
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["Settings"])
 
