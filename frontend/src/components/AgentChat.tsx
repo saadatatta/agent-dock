@@ -110,52 +110,125 @@ const AgentChat: React.FC = () => {
     setQuery(e.target.value);
   };
 
-  // Function to check if a query is GitHub related
+  // Function to check if a query is a GitHub-related query
   const isGitHubQuery = (q: string): boolean => {
     const lowerQuery = q.toLowerCase();
-    return (
-      lowerQuery.includes('github') || 
-      lowerQuery.includes('repository') || 
-      lowerQuery.includes('repositories') || 
-      lowerQuery.includes('repo') || 
-      lowerQuery.includes('repos')
-    );
+    
+    // Match simple "show my repositories" type queries
+    const basicRepoPatterns = [
+      /^(?:show|list|get)\s+(?:my|all)\s+(?:github\s+)?(?:repos|repositories)$/i,
+      /^github\s+(?:repos|repositories)$/i,
+      /^what\s+(?:repos|repositories)\s+do\s+i\s+have$/i
+    ];
+    
+    // Match PR-related queries
+    const prPatterns = [
+      /(?:show|list|get)\s+(?:pull\s+requests|prs)\s+(?:in|for|from)\s+(\S+)(?:\s+repo|\s+repository)?/i,
+      /(?:pull\s+requests|prs)\s+(?:in|for|from)\s+(\S+)(?:\s+repo|\s+repository)?/i
+    ];
+    
+    // Check if it's a basic repo query
+    const isBasicRepoQuery = basicRepoPatterns.some(pattern => pattern.test(lowerQuery));
+    
+    // Check if it's a PR query
+    const isPrQuery = prPatterns.some(pattern => pattern.test(lowerQuery));
+    
+    return isBasicRepoQuery || isPrQuery;
+  };
+  
+  // Function to extract repository name from query
+  const extractRepositoryName = (q: string): string | null => {
+    const lowerQuery = q.toLowerCase();
+    
+    // Look for patterns like "in repo X" or "in X repo" or just "X repo"
+    const repoPatterns = [
+      /(?:in|for|from)\s+(?:repo|repository)?\s*(\S+)(?:\s+repo|\s+repository)?/i,
+      /(?:repo|repository)\s+(\S+)/i
+    ];
+    
+    for (const pattern of repoPatterns) {
+      const match = q.match(pattern);
+      if (match && match[1]) {
+        return match[1].replace(/[,.;:'"]/g, ''); // Clean up any punctuation
+      }
+    }
+    
+    return null;
   };
 
-  // Function to handle GitHub specific queries directly
+  // Enhanced function to handle GitHub specific queries directly
   const handleGitHubQuery = async (): Promise<{content: string, success: boolean}> => {
     try {
-      // Test GitHub connection
+      // Test GitHub connection first
       const testResponse = await axios.post('http://localhost:8000/api/v1/tools/github/test');
       
       if (testResponse.data.status === 'success') {
-        // Fetch repositories
-        const reposResponse = await axios.post('http://localhost:8000/api/v1/tools/github/repos');
+        // Get the content from the last user message
+        const lastUserMessageContent = messages.filter(m => m.sender === 'user').pop()?.content || '';
+        const repoName = extractRepositoryName(lastUserMessageContent);
         
-        if (reposResponse.data.status === 'success') {
-          const repos: GitHubRepo[] = reposResponse.data.repos;
+        // If this is a PR request for specific repo
+        if (repoName && lastUserMessageContent.toLowerCase().includes('pull request')) {
+          // Execute using the agent directly
+          const response = await axios.post(`http://localhost:8000/api/v1/agents/3/execute`, {
+            action: "list_pull_requests",
+            parameters: {
+              repo: repoName,
+              state: "open"
+            }
+          });
           
-          // Format the repositories information
-          let reposContent = `# GitHub Repositories\n\n`;
-          
-          if (repos.length === 0) {
-            reposContent += "No repositories found.";
-          } else {
-            repos.forEach(repo => {
-              reposContent += `## ${repo.name}\n`;
-              if (repo.description) reposContent += `${repo.description}\n\n`;
-              reposContent += `- URL: ${repo.url}\n`;
-              reposContent += `- Stars: ${repo.stars}\n`;
-              reposContent += `- Forks: ${repo.forks}\n`;
-              if (repo.language) reposContent += `- Language: ${repo.language}\n`;
-              reposContent += `\n`;
-            });
+          if (response.data.status === 'success') {
+            const prs = response.data.data.pull_requests || [];
+            
+            // Format the PR information
+            let prsContent = `# Pull Requests for ${repoName}\n\n`;
+            
+            if (prs.length === 0) {
+              prsContent += "No open pull requests found.";
+            } else {
+              prs.forEach((pr: any) => {
+                prsContent += `## PR #${pr.number}: ${pr.title}\n`;
+                prsContent += `- State: ${pr.state}\n`;
+                prsContent += `- Created by: ${pr.user.login}\n`;
+                prsContent += `- URL: ${pr.url}\n\n`;
+              });
+            }
+            
+            return {
+              content: prsContent,
+              success: true
+            };
           }
+        } else {
+          // Handle repositories listing (original implementation)
+          const reposResponse = await axios.post('http://localhost:8000/api/v1/tools/github/repos');
           
-          return {
-            content: reposContent,
-            success: true
-          };
+          if (reposResponse.data.status === 'success') {
+            const repos: GitHubRepo[] = reposResponse.data.repos;
+            
+            // Format the repositories information
+            let reposContent = `# GitHub Repositories\n\n`;
+            
+            if (repos.length === 0) {
+              reposContent += "No repositories found.";
+            } else {
+              repos.forEach(repo => {
+                reposContent += `## ${repo.name}\n`;
+                if (repo.description) reposContent += `${repo.description}\n\n`;
+                reposContent += `- URL: ${repo.url}\n`;
+                reposContent += `- Stars: ${repo.stars}\n`;
+                reposContent += `- Forks: ${repo.forks}\n`;
+                if (repo.language) reposContent += `- Language: ${repo.language}\n`;
+                reposContent += `\n`;
+              });
+            }
+            
+            return {
+              content: reposContent,
+              success: true
+            };
+          }
         }
       }
       

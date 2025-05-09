@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Dict, Any
 from app.core.database import get_db
 from app.schemas.agent import (
     AgentCreate,
@@ -133,4 +133,39 @@ async def remove_tool_from_agent(
         status="success",
         data=agent,
         message="Tool removed from agent successfully"
-    ) 
+    )
+
+@router.post("/{agent_id}/execute", status_code=status.HTTP_200_OK)
+async def execute_agent(
+    agent_id: int,
+    action_data: Dict[str, Any],
+    db: Session = Depends(get_db)
+):
+    """Execute an agent with the specified action and parameters"""
+    try:
+        agent = agent_service.get_agent(db, agent_id)
+        if not agent:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Agent not found"
+            )
+        
+        if not agent.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Agent is not active"
+            )
+        
+        # Execute the agent
+        result = agent_service.execute_agent(db, agent_id, action_data)
+        
+        return {
+            "status": "success",
+            "data": result,
+            "message": f"Agent executed successfully"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        ) 

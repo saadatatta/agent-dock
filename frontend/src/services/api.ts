@@ -45,6 +45,11 @@ export const agentApi = {
     const response = await api.delete(`/agents/${agentId}/tools/${toolId}`);
     return response.data;
   },
+
+  executeAgent: async (agentId: number, actionData: { action: string, parameters: any }): Promise<ApiResponse<any>> => {
+    const response = await api.post(`/agents/${agentId}/execute`, actionData);
+    return response.data;
+  }
 };
 
 export const toolApi = {

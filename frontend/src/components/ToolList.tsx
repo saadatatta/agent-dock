@@ -32,7 +32,10 @@ import {
   Delete as DeleteIcon,
   Link as LinkIcon,
   Code as CodeIcon,
-  Api as ApiIcon
+  Api as ApiIcon,
+  GitHub as GitHubIcon,
+  Storage as RepositoryIcon,
+  BugReport as PullRequestIcon
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toolApi } from '../services/api';
@@ -70,6 +73,20 @@ const ToolList: React.FC = () => {
       setError('Failed to fetch tools');
       console.error('Error fetching tools:', error);
       setLoading(false);
+    }
+  };
+
+  // Function to render tool type icon
+  const getToolTypeIcon = (type: string) => {
+    switch (type.toLowerCase()) {
+      case 'github':
+        return <GitHubIcon />;
+      case 'slack':
+        return <ApiIcon />;
+      case 'jira':
+        return <LinkIcon />;
+      default:
+        return <CodeIcon />;
     }
   };
 
@@ -402,7 +419,7 @@ const ToolList: React.FC = () => {
                         
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
                           <Chip
-                            icon={<ApiIcon />}
+                            icon={getToolTypeIcon(tool.type)}
                             label={tool.type ? tool.type.charAt(0).toUpperCase() + tool.type.slice(1) : "Unknown"}
                             size="small"
                             sx={{ 

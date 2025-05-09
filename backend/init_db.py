@@ -3,6 +3,7 @@ import sys
 import logging
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+from sqlalchemy.orm import Session
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Import SQLAlchemy components
-from app.core.database import engine, Base, init_models
+from app.core.database import engine, Base, init_models, SessionLocal
 
 # Explicitly import all models
 from app.models.base import Base
@@ -139,6 +140,154 @@ def init_db(drop_all=False):
                 logger.info("Tables created using raw SQL.")
             except Exception as e:
                 logger.error(f"Error creating tables using raw SQL: {str(e)}")
+        
+        # Create initial data
+        try:
+            # Get a database session
+            db = SessionLocal()
+            
+            # Create tools
+            github_tool = Tool(
+                name="GitHub API",
+                description="GitHub API tool for repository operations, pull requests, and more",
+                type="github",
+                config={
+                    "api_url": "https://api.github.com",
+                    "require_auth": True
+                },
+                is_active=True
+            )
+            db.add(github_tool)
+            
+            slack_tool = Tool(
+                name="Slack API",
+                description="Slack API tool for sending messages and more",
+                type="slack",
+                config={
+                    "api_url": "https://api.slack.com",
+                    "require_auth": True
+                },
+                is_active=True
+            )
+            db.add(slack_tool)
+            
+            # Create agents
+            github_agent = Agent(
+                name="GitHub Agent",
+                description="An agent that handles GitHub operations using the GitHub API tool",
+                code="""
+# GitHub Agent for handling GitHub operations
+# This agent will use the GitHub API tool to perform various GitHub operations
+
+# Check what action was requested
+if action == "get_repositories":
+    # Find the GitHub tool
+    github_tool = next((t for t in tools if t.type == "github"), None)
+    if not github_tool:
+        result = {"error": "GitHub tool not found or not enabled"}
+    else:
+        # Get parameters from the request or use defaults
+        params = parameters.copy() or {}
+        # Execute the GitHub API tool
+        repos = execute_tool(github_tool.id, "get_repos", params)
+        result = {
+            "repositories": repos,
+            "count": len(repos)
+        }
+
+elif action == "list_pull_requests":
+    # Find the GitHub tool
+    github_tool = next((t for t in tools if t.type == "github"), None)
+    if not github_tool:
+        result = {"error": "GitHub tool not found or not enabled"}
+    else:
+        # Check if repository is provided
+        if "repo" not in parameters:
+            result = {"error": "Repository parameter is required"}
+        else:
+            # Get parameters from the request or use defaults
+            params = parameters.copy()
+            # Execute the GitHub API tool
+            prs = execute_tool(github_tool.id, "list_pull_requests", params)
+            result = {
+                "pull_requests": prs,
+                "count": len(prs),
+                "repository": parameters["repo"]
+            }
+
+elif action == "get_pull_request_details":
+    # Find the GitHub tool
+    github_tool = next((t for t in tools if t.type == "github"), None)
+    if not github_tool:
+        result = {"error": "GitHub tool not found or not enabled"}
+    else:
+        # Check if required parameters are provided
+        if "repo" not in parameters or "number" not in parameters:
+            result = {"error": "Repository and PR number parameters are required"}
+        else:
+            # Get parameters from the request or use defaults
+            params = parameters.copy()
+            # Execute the GitHub API tool
+            pr_details = execute_tool(github_tool.id, "get_pr_details", params)
+            result = {
+                "pull_request": pr_details,
+                "repository": parameters["repo"]
+            }
+
+else:
+    result = {
+        "error": f"Unsupported action: {action}",
+        "supported_actions": ["get_repositories", "list_pull_requests", "get_pull_request_details"]
+    }
+""",
+                config={
+                    "default_repo": "",
+                    "default_limit": 10
+                },
+                is_active=True
+            )
+            db.add(github_agent)
+            db.flush()  # Flush to get the ID
+            
+            # Add tools to agents
+            github_agent.tools.append(github_tool)
+            
+            example_agent = Agent(
+                name="Example Agent",
+                description="An example agent for testing",
+                code="""
+# Example Agent for testing
+# This agent is used for testing purposes
+
+# Check what action was requested
+if action == "example_action":
+    result = {"message": "This is an example action"}
+else:
+    result = {
+        "error": f"Unsupported action: {action}",
+        "supported_actions": ["example_action"]
+    }
+""",
+                config={},
+                is_active=True
+            )
+            db.add(example_agent)
+            db.flush()  # Flush to get the ID
+            
+            # Add tools to agents
+            example_agent.tools.append(slack_tool)
+            
+            # Commit the changes
+            db.commit()
+            
+            logger.info("Agents and tools created successfully.")
+        except Exception as e:
+            logger.error(f"Error creating agents and tools: {str(e)}")
+            if 'db' in locals():
+                db.rollback()
+        finally:
+            if 'db' in locals():
+                db.close()
         
         logger.info("Database tables created successfully.")
     except Exception as e:

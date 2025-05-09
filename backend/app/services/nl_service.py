@@ -170,6 +170,13 @@ class NaturalLanguageService:
             agents = self.agent_service.get_agents(db)
             tools = self.tool_service.get_tools(db)
 
+            # Find the GitHub agent if it exists
+            github_agent = next((agent for agent in agents if "github" in agent.name.lower()), None)
+            github_agent_id = github_agent.id if github_agent else None
+
+            # Check if this is a GitHub repository-related query
+            is_github_related = any(keyword in query.lower() for keyword in ["github", "repo", "repository", "pull request", "pr", "issue", "commit"])
+            
             # Create context for the LLM
             context = {
                 "available_agents": [
@@ -192,29 +199,66 @@ class NaturalLanguageService:
                 ]
             }
 
-            # Create prompt for the LLM
-            prompt = f"""
-            Context:
-            Available Agents: {context['available_agents']}
-            Available Tools: {context['available_tools']}
+            # Create a more detailed prompt for GitHub-related queries
+            if is_github_related and github_agent_id:
+                # Extract repository name - look for patterns like "in repo X" or "in X repo" or just "X repo"
+                prompt = f"""
+                Context:
+                Available Agents: {context['available_agents']}
+                Available Tools: {context['available_tools']}
 
-            User Query: {query}
+                User Query: {query}
 
-            Please analyze the query and determine:
-            1. Which agent should handle this query
-            2. What action should be taken
-            3. What parameters are needed
+                This appears to be a GitHub-related query. You MUST extract the repository name correctly.
 
-            IMPORTANT: You must respond with ONLY a valid JSON object, nothing else. No explanations, no code blocks, no other text.
-            JSON RESPONSE FORMAT:
-            {{
-                "agent_id": <agent_id or null if no suitable agent>,
-                "action": <action_name or "default" if no specific action>,
-                "parameters": {{
-                    <parameter_name>: <parameter_value>
+                Here are some examples of how to parse GitHub queries:
+                1. "list pull requests in agent-dock repo" → agent_id: {github_agent_id}, action: "list_pull_requests", parameters: {{"repo": "agent-dock"}}
+                2. "show PRs in microsoft/vscode" → agent_id: {github_agent_id}, action: "list_pull_requests", parameters: {{"repo": "microsoft/vscode"}}
+                3. "get repository details for user/some-repo" → agent_id: {github_agent_id}, action: "get_repo_details", parameters: {{"repo": "user/some-repo"}}
+                4. "get PR #123 from agent-dock repository" → agent_id: {github_agent_id}, action: "get_pull_request_details", parameters: {{"repo": "agent-dock", "number": 123}}
+
+                Important: If you see a repository name without owner (like just "agent-dock"), assume it's a valid repository name.
+                The GitHub agent requires the "repo" parameter for all repository-related operations.
+
+                Please analyze the query and determine:
+                1. Which agent should handle this query (likely GitHub agent)
+                2. What action should be taken
+                3. What parameters are needed (MAKE SURE to include the "repo" parameter)
+
+                IMPORTANT: You must respond with ONLY a valid JSON object, nothing else. No explanations, no code blocks, no other text.
+                JSON RESPONSE FORMAT:
+                {{
+                    "agent_id": <agent_id or null if no suitable agent>,
+                    "action": <action_name or "default" if no specific action>,
+                    "parameters": {{
+                        <parameter_name>: <parameter_value>
+                    }}
                 }}
-            }}
-            """
+                """
+            else:
+                # Standard prompt for non-GitHub queries
+                prompt = f"""
+                Context:
+                Available Agents: {context['available_agents']}
+                Available Tools: {context['available_tools']}
+
+                User Query: {query}
+
+                Please analyze the query and determine:
+                1. Which agent should handle this query
+                2. What action should be taken
+                3. What parameters are needed
+
+                IMPORTANT: You must respond with ONLY a valid JSON object, nothing else. No explanations, no code blocks, no other text.
+                JSON RESPONSE FORMAT:
+                {{
+                    "agent_id": <agent_id or null if no suitable agent>,
+                    "action": <action_name or "default" if no specific action>,
+                    "parameters": {{
+                        <parameter_name>: <parameter_value>
+                    }}
+                }}
+                """
 
             # Get response from the active LLM
             try:
