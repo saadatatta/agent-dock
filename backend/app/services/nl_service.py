@@ -8,10 +8,11 @@ from typing import Dict, Any, List, Tuple
 import logging
 from sqlalchemy.orm import Session
 from ..models.agent import Agent
-from ..models.tool import Tool
+from ..models.tool import Tool, ToolLog
 from .agent_service import AgentService
 from .tool_service import ToolService
 from .settings_service import SettingsService
+import html
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +106,135 @@ class NaturalLanguageService:
                 # Return a default response as fallback
                 return {"agent_id": None, "action": "default", "parameters": {}}
 
-    def _get_llm_response(self, db: Session, messages: List[Dict[str, str]]) -> str:
-        """Get a response from the active LLM model"""
+    def _format_response_for_humans(self, response_data: Dict[str, Any]) -> str:
+        """Format JSON response data into human-readable text"""
+        try:
+            # If this is an error, just return the error message
+            if response_data.get("error"):
+                return f"Error: {response_data['error']}"
+                
+            # If this is a GitHub repository response
+            if "repos" in response_data or "repositories" in response_data:
+                repos = response_data.get("repos") or response_data.get("repositories") or []
+                if not repos:
+                    return "No repositories found."
+                    
+                result = "Here are your GitHub repositories:\n\n"
+                for repo in repos:
+                    name = repo.get("name", "Unnamed repository")
+                    desc = repo.get("description", "No description available")
+                    url = repo.get("html_url") or repo.get("url", "#")
+                    stars = repo.get("stargazers_count") or repo.get("stars", 0)
+                    
+                    result += f"- **{name}**: {desc}\n"
+                    result += f"  Stars: {stars} | URL: {url}\n\n"
+                    
+                return result
+                
+            # If this is a pull request response
+            if "pull_requests" in response_data:
+                prs = response_data.get("pull_requests", [])
+                if not prs:
+                    return "No pull requests found."
+                    
+                result = "Here are the pull requests:\n\n"
+                for pr in prs:
+                    title = pr.get("title", "Untitled PR")
+                    number = pr.get("number", "?")
+                    state = pr.get("state", "unknown")
+                    creator = pr.get("user", {}).get("login", "unknown")
+                    
+                    result += f"- **#{number}: {title}**\n"
+                    result += f"  State: {state} | Created by: {creator}\n\n"
+                    
+                return result
+                
+            # If this is a Slack response
+            if "channel" in response_data:
+                channel = response_data.get("channel", "")
+                ok = response_data.get("ok", False)
+                
+                if ok:
+                    return f"Message successfully sent to {channel} channel."
+                else:
+                    error = response_data.get("error", "unknown error")
+                    return f"Failed to send message to {channel} channel: {error}"
+            
+            # Generic response formatter for other data types
+            if isinstance(response_data, dict):
+                # Try to find commonly useful fields to display
+                result = ""
+                
+                # Display message field if present
+                if "message" in response_data:
+                    result += f"{response_data['message']}\n\n"
+                
+                # Display name/title fields if present
+                for key in ["name", "title", "subject"]:
+                    if key in response_data:
+                        result += f"{key.capitalize()}: {response_data[key]}\n"
+                
+                # Display status if present
+                if "status" in response_data:
+                    result += f"Status: {response_data['status']}\n"
+                
+                # If there's a count field, display it
+                if "count" in response_data:
+                    result += f"Count: {response_data['count']}\n"
+                
+                # If nothing useful was found or result is still empty, return a simplified JSON version
+                if not result:
+                    # Clean up the dictionary by removing any huge nested objects
+                    clean_dict = {}
+                    for k, v in response_data.items():
+                        if isinstance(v, (dict, list)) and len(str(v)) > 100:
+                            clean_dict[k] = f"[Complex {type(v).__name__}]"
+                        else:
+                            clean_dict[k] = v
+                    
+                    result = "Here's what I found:\n\n"
+                    for k, v in clean_dict.items():
+                        if k != "raw_response" and k != "details":
+                            result += f"- **{k}**: {v}\n"
+                
+                return result
+            
+            # For list responses
+            if isinstance(response_data, list):
+                if not response_data:
+                    return "No items found."
+                
+                result = "Here's what I found:\n\n"
+                for i, item in enumerate(response_data[:10], 1):  # Limit to first 10
+                    if isinstance(item, dict):
+                        # Try to get a name or title for each item
+                        name = None
+                        for key in ["name", "title", "id"]:
+                            if key in item:
+                                name = item[key]
+                                break
+                        
+                        if name:
+                            result += f"{i}. **{name}**\n"
+                        else:
+                            result += f"{i}. Item {i}\n"
+                    else:
+                        result += f"{i}. {str(item)}\n"
+                
+                if len(response_data) > 10:
+                    result += f"\n... and {len(response_data) - 10} more items."
+                
+                return result
+            
+            # Fallback for other types
+            return str(response_data)
+            
+        except Exception as e:
+            logger.error(f"Error formatting response: {e}")
+            return "I received information but couldn't format it properly. Here's what I know: " + str(response_data)
+
+    def _get_llm_response(self, db: Session, messages: List[Dict[str, str]]) -> Tuple[str, Dict[str, Any]]:
+        """Get a response from the active LLM model and return token usage information"""
         # Get the active model from settings
         model_key, model_config = self.settings_service.get_active_llm_model(db)
         provider = model_config.get("provider", "groq")
@@ -114,6 +242,14 @@ class NaturalLanguageService:
         parameters = model_config.get("parameters", {})
         
         logger.info(f"Using LLM model: {provider}/{model_name}")
+        
+        usage_data = {
+            "provider": provider,
+            "model": model_name,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0
+        }
         
         try:
             if provider == "groq":
@@ -126,7 +262,14 @@ class NaturalLanguageService:
                 )
                 content = response.choices[0].message.content
                 logger.debug(f"Raw response from {provider}/{model_name}: {content[:100]}...")
-                return content
+                
+                # Get usage if available
+                if hasattr(response, 'usage'):
+                    usage_data["input_tokens"] = getattr(response.usage, "prompt_tokens", 0)
+                    usage_data["output_tokens"] = getattr(response.usage, "completion_tokens", 0)
+                    usage_data["total_tokens"] = getattr(response.usage, "total_tokens", 0)
+                
+                return content, usage_data
                 
             elif provider == "openai":
                 client = self._initialize_llm_client(provider)
@@ -138,7 +281,14 @@ class NaturalLanguageService:
                 )
                 content = response.choices[0].message.content
                 logger.debug(f"Raw response from {provider}/{model_name}: {content[:100]}...")
-                return content
+                
+                # Get usage if available
+                if hasattr(response, 'usage'):
+                    usage_data["input_tokens"] = getattr(response.usage, "prompt_tokens", 0)
+                    usage_data["output_tokens"] = getattr(response.usage, "completion_tokens", 0)
+                    usage_data["total_tokens"] = getattr(response.usage, "total_tokens", 0)
+                
+                return content, usage_data
                 
             elif provider == "anthropic":
                 client = self._initialize_llm_client(provider)
@@ -154,7 +304,14 @@ class NaturalLanguageService:
                 )
                 content = response.content[0].text
                 logger.debug(f"Raw response from {provider}/{model_name}: {content[:100]}...")
-                return content
+                
+                # Get usage if available
+                if hasattr(response, 'usage'):
+                    usage_data["input_tokens"] = getattr(response.usage, "input_tokens", 0)
+                    usage_data["output_tokens"] = getattr(response.usage, "output_tokens", 0)
+                    usage_data["total_tokens"] = getattr(response.usage, "input_tokens", 0) + getattr(response.usage, "output_tokens", 0)
+                
+                return content, usage_data
                 
             else:
                 raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -340,7 +497,11 @@ class NaturalLanguageService:
 
             # Get response from the active LLM
             try:
-                result = self._get_llm_response(
+                model_key, model_config = self.settings_service.get_active_llm_model(db)
+                provider = model_config.get("provider", "groq")
+                model_name = model_config.get("model_name", "llama-3.3-70b-versatile")
+                
+                result, usage_data = self._get_llm_response(
                     db,
                     messages=[
                         {"role": "system", "content": "You are a helpful API response generator that ONLY outputs valid JSON. Never explain your reasoning or add any text outside the JSON. Even if you're uncertain, make a best guess and include it in the JSON structure."},
@@ -366,7 +527,11 @@ class NaturalLanguageService:
                 logger.error(f"Error calling language model: {str(e)}")
                 return {
                     "status": "error",
-                    "message": f"Error calling language model: {str(e)}"
+                    "message": f"Error calling language model: {str(e)}",
+                    "model_info": {
+                        "provider": provider,
+                        "model": model_name
+                    }
                 }
 
             # Execute the action
@@ -385,22 +550,77 @@ class NaturalLanguageService:
                     }
                 )
 
+                # Get a human-readable version of the response
+                human_readable = self._format_response_for_humans(result.get("result", {}))
+
+                # Create a tool log with all the details including LLM usage
+                # Check if there's a specific tool_id in the action plan
+                tool_id = action_plan.get("tool_id")
+                if not tool_id:
+                    # Try to find an appropriate tool to associate the log with
+                    if agent and agent.tools:
+                        # Use the first tool associated with the agent
+                        tool_id = agent.tools[0].id
+                    else:
+                        # Get any available tool
+                        all_tools = self.tool_service.get_tools(db)
+                        tool_id = all_tools[0].id if all_tools else None
+                
+                # Only log if we have a valid tool_id
+                if tool_id:
+                    self.tool_service.log_tool_action(
+                        db,
+                        tool_id,
+                        "nl_query",
+                        "success",
+                        {
+                            "query": query,
+                            "action_plan": action_plan,
+                            "raw_result": result,
+                            "llm": usage_data
+                        }
+                    )
+
                 return {
                     "status": "success",
                     "result": result,
-                    "action_plan": action_plan
+                    "action_plan": action_plan,
+                    "human_readable": human_readable,
+                    "model_info": {
+                        "provider": provider,
+                        "model": model_name
+                    },
+                    "token_usage": usage_data
                 }
             else:
                 return {
                     "status": "error",
-                    "message": "No suitable agent found for the query"
+                    "message": "No suitable agent found for the query",
+                    "model_info": {
+                        "provider": provider,
+                        "model": model_name
+                    },
+                    "token_usage": usage_data
                 }
 
         except Exception as e:
             logger.error(f"Error processing query: {str(e)}")
+            # Try to get the active model info even in case of error
+            try:
+                model_key, model_config = self.settings_service.get_active_llm_model(db)
+                provider = model_config.get("provider", "groq")
+                model_name = model_config.get("model_name", "llama-3.3-70b-versatile")
+                model_info = {
+                    "provider": provider,
+                    "model": model_name
+                }
+            except:
+                model_info = {"provider": "unknown", "model": "unknown"}
+                
             return {
                 "status": "error",
-                "message": str(e)
+                "message": str(e),
+                "model_info": model_info
             }
 
     def get_agent_suggestions(self, db: Session, query: str) -> List[Dict[str, Any]]:

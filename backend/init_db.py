@@ -124,7 +124,7 @@ def init_db(drop_all=False):
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tool_logs (
                     id SERIAL PRIMARY KEY,
-                    tool_id INTEGER REFERENCES tools(id),
+                    tool_id INTEGER REFERENCES tools(id) NULL,
                     action VARCHAR(255) NOT NULL,
                     status VARCHAR(255) NOT NULL,
                     details JSONB,

@@ -64,7 +64,7 @@ class ToolService:
         db.commit()
         return db_tool
 
-    def log_tool_action(self, db: Session, tool_id: int, action: str, status: str, details: Optional[Dict[str, Any]] = None, error_message: Optional[str] = None) -> ToolLog:
+    def log_tool_action(self, db: Session, tool_id: Optional[int], action: str, status: str, details: Optional[Dict[str, Any]] = None, error_message: Optional[str] = None) -> ToolLog:
         """Log a tool action"""
         tool_log = ToolLog(
             tool_id=tool_id,

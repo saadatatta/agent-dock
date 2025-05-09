@@ -30,7 +30,8 @@ import {
   Delete as DeleteIcon,
   AutoAwesome as MagicIcon,
   Mic as MicIcon,
-  MicOff as MicOffIcon
+  MicOff as MicOffIcon,
+  Memory as MemoryIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -45,6 +46,10 @@ interface Message {
   timestamp: Date;
   agentId?: number;
   agentName?: string;
+  modelInfo?: {
+    provider: string;
+    model: string;
+  };
 }
 
 interface GitHubRepo {
@@ -87,6 +92,10 @@ const AgentChat: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const [activeLLM, setActiveLLM] = useState<{provider: string, model: string}>({
+    provider: '',
+    model: ''
+  });
 
   // Animation variants
   const containerVariants = {
@@ -369,53 +378,88 @@ const AgentChat: React.FC = () => {
       // Replace the temporary message with the actual response
       const result = response.data;
       
+      // Update the active LLM info if available
+      if (result.model_info) {
+        setActiveLLM({
+          provider: result.model_info.provider,
+          model: result.model_info.model
+        });
+      }
+      
       let responseContent = '';
       
       if (result.status === 'success') {
-        // Extract agent information from the result
-        const agentId = result.result?.agent_id || result.action_plan?.agent_id;
-        const agentName = result.result?.agent_name || '';
-        
-        if (result.result?.status === 'success') {
-          // Format successful response
-          if (typeof result.result.result === 'object') {
-            // For GitHib repository response - handle both "repos" and "repositories" keys for backward compatibility
-            if (result.result.result.repos || result.result.result.repositories) {
-              const repos = result.result.result.repos || result.result.result.repositories || [];
-              responseContent = `# GitHub Repositories\n\n`;
-              
-              if (repos.length === 0) {
-                responseContent += "No repositories found.";
-              } else {
-                repos.forEach((repo: any) => {
-                  responseContent += `## [${repo.name}](${repo.html_url || repo.url})\n`;
-                  responseContent += repo.description ? `${repo.description}\n` : '';
-                  responseContent += `- Stars: ${repo.stargazers_count || repo.stars || 0}\n`;
-                  responseContent += `- Forks: ${repo.forks_count || repo.forks || 0}\n`;
-                  responseContent += `- Language: ${repo.language || 'Not specified'}\n\n`;
-                });
+        // First try to use human_readable content if available
+        if (result.human_readable) {
+          responseContent = result.human_readable;
+        } else {
+          // Extract agent information from the result
+          const agentId = result.result?.agent_id || result.action_plan?.agent_id;
+          const agentName = result.result?.agent_name || '';
+          
+          if (result.result?.status === 'success') {
+            // Format successful response
+            if (typeof result.result.result === 'object') {
+              // For GitHib repository response - handle both "repos" and "repositories" keys for backward compatibility
+              if (result.result.result.repos || result.result.result.repositories) {
+                const repos = result.result.result.repos || result.result.result.repositories || [];
+                responseContent = `# GitHub Repositories\n\n`;
+                
+                if (repos.length === 0) {
+                  responseContent += "No repositories found.";
+                } else {
+                  repos.forEach((repo: any) => {
+                    responseContent += `## [${repo.name}](${repo.html_url || repo.url})\n`;
+                    responseContent += repo.description ? `${repo.description}\n` : '';
+                    responseContent += `- Stars: ${repo.stargazers_count || repo.stars || 0}\n`;
+                    responseContent += `- Forks: ${repo.forks_count || repo.forks || 0}\n`;
+                    responseContent += `- Language: ${repo.language || 'Not specified'}\n\n`;
+                  });
+                }
               }
-            }
-            // For other structured responses
-            else {
-              responseContent = `\`\`\`json\n${JSON.stringify(result.result.result, null, 2)}\n\`\`\``;
+              // For other structured responses, try to make them human-readable
+              else {
+                // Try to extract readable information from the result
+                responseContent = "";
+                
+                // Check if there's a message
+                if (result.result.result.message) {
+                  responseContent += result.result.result.message + "\n\n";
+                }
+                
+                // Check if there's key information that should be displayed
+                const importantKeys = ["name", "title", "description", "status", "count"];
+                let hasImportantInfo = false;
+                
+                for (const key of importantKeys) {
+                  if (result.result.result[key] !== undefined) {
+                    responseContent += `**${key.charAt(0).toUpperCase() + key.slice(1)}**: ${result.result.result[key]}\n`;
+                    hasImportantInfo = true;
+                  }
+                }
+                
+                // If no important info found, create a formatted JSON representation
+                if (!hasImportantInfo) {
+                  responseContent = `\`\`\`json\n${JSON.stringify(result.result.result, null, 2)}\n\`\`\``;
+                }
+              }
+            } else {
+              // For text responses
+              responseContent = result.result.result;
             }
           } else {
-            // For text responses
-            responseContent = result.result.result;
-          }
-        } else {
-          // Format error response
-          responseContent = `Error: ${result.result?.error || 'Unknown error'}`;
-          
-          // Special handling for GitHub API 404 errors
-          if (responseContent.includes("404") && responseContent.includes("https://api.github.com/repos/")) {
-            responseContent += "\n\nThe repository was not found. Please make sure to use the format 'owner/repo' (e.g., 'microsoft/vscode' not just 'vscode').";
-          }
-          
-          // If there are supported actions, include them
-          if (result.result?.supported_actions) {
-            responseContent += `\n\nSupported actions: ${result.result.supported_actions.join(", ")}`;
+            // Format error response
+            responseContent = `Error: ${result.result?.error || 'Unknown error'}`;
+            
+            // Special handling for GitHub API 404 errors
+            if (responseContent.includes("404") && responseContent.includes("https://api.github.com/repos/")) {
+              responseContent += "\n\nThe repository was not found. Please make sure to use the format 'owner/repo' (e.g., 'microsoft/vscode' not just 'vscode').";
+            }
+            
+            // If there are supported actions, include them
+            if (result.result?.supported_actions) {
+              responseContent += `\n\nSupported actions: ${result.result.supported_actions.join(", ")}`;
+            }
           }
         }
       } else {
@@ -430,7 +474,8 @@ const AgentChat: React.FC = () => {
         sender: 'agent',
         timestamp: new Date(),
         agentId: result.result?.agent_id || result.action_plan?.agent_id,
-        agentName: result.result?.agent_name || 'Assistant'
+        agentName: result.result?.agent_name || 'Assistant',
+        modelInfo: result.model_info
       };
 
       // Replace the temporary message with the final one
@@ -581,21 +626,37 @@ const AgentChat: React.FC = () => {
           Agent Chat
         </Typography>
         
-        <motion.div
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-        >
-          <Button
-            variant="outlined"
-            color="error"
-            startIcon={<DeleteIcon />}
-            onClick={clearChat}
-            size="small"
-            sx={{ borderRadius: 2 }}
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+          {activeLLM.provider && (
+            <Chip
+              icon={<MemoryIcon fontSize="small" />}
+              label={`${activeLLM.provider} / ${activeLLM.model.split('-')[0]}`}
+              size="small"
+              color="secondary"
+              variant="outlined"
+              sx={{ 
+                bgcolor: 'rgba(255, 0, 255, 0.05)',
+                border: '1px solid rgba(255, 0, 255, 0.2)',
+              }}
+            />
+          )}
+          
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
           >
-            Clear
-          </Button>
-        </motion.div>
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DeleteIcon />}
+              onClick={clearChat}
+              size="small"
+              sx={{ borderRadius: 2 }}
+            >
+              Clear
+            </Button>
+          </motion.div>
+        </Box>
       </Box>
       
       <Collapse in={showAlert}>
@@ -729,13 +790,22 @@ const AgentChat: React.FC = () => {
                             background: 'rgba(0,0,0,0.2)',
                             display: 'flex',
                             alignItems: 'center',
+                            justifyContent: 'space-between',
                             gap: 1
                           }}
                         >
-                          <MagicIcon fontSize="small" sx={{ color: theme.palette.secondary.main }} />
-                          <Typography variant="subtitle2" color="text.secondary">
-                            {message.agentName}
-                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <MagicIcon fontSize="small" sx={{ color: theme.palette.secondary.main }} />
+                            <Typography variant="subtitle2" color="text.secondary">
+                              {message.agentName}
+                            </Typography>
+                          </Box>
+                          
+                          {message.modelInfo && (
+                            <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.7 }}>
+                              via {message.modelInfo.provider}/{message.modelInfo.model.split('-')[0]}
+                            </Typography>
+                          )}
                         </Box>
                       )}
                       
@@ -793,7 +863,7 @@ const AgentChat: React.FC = () => {
       >
         <TextField
           fullWidth
-          placeholder="Ask a question..."
+          placeholder={activeLLM.provider ? `Ask ${activeLLM.provider}...` : "Ask a question..."}
           value={query}
           onChange={handleQueryChange}
           variant="outlined"

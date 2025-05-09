@@ -11,10 +11,24 @@ nl_service = NaturalLanguageService()
 class QueryRequest(BaseModel):
     query: str
 
+class ModelInfo(BaseModel):
+    provider: str
+    model: str
+
+class TokenUsage(BaseModel):
+    provider: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
 class QueryResponse(BaseModel):
     status: str
     result: Dict[str, Any]
     message: Optional[str] = None
+    human_readable: Optional[str] = None
+    model_info: Optional[ModelInfo] = None
+    token_usage: Optional[TokenUsage] = None
 
 class SuggestionResponse(BaseModel):
     status: str
@@ -30,7 +44,10 @@ async def process_query(request: QueryRequest, db: Session = Depends(get_db)):
         return QueryResponse(
             status=result["status"],
             result=result.get("result", {}),
-            message=result.get("message")
+            message=result.get("message"),
+            human_readable=result.get("human_readable"),
+            model_info=result.get("model_info"),
+            token_usage=result.get("token_usage")
         )
     except Exception as e:
         raise HTTPException(

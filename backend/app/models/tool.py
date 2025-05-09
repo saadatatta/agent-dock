@@ -18,7 +18,7 @@ class ToolLog(Base, TimestampMixin):
     __tablename__ = "tool_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    tool_id = Column(Integer, ForeignKey("tools.id"), nullable=False)
+    tool_id = Column(Integer, ForeignKey("tools.id"), nullable=True)  # Allow null for logs without specific tools
     action = Column(String, nullable=False)
     status = Column(String, nullable=False)  # success, error
     details = Column(JSON)  # Request/response details
