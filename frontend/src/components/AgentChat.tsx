@@ -16,7 +16,8 @@ import {
   Link as MuiLink,
   useTheme,
   Paper,
-  InputAdornment
+  InputAdornment,
+  Tooltip
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -27,7 +28,9 @@ import {
   GitHub as GitHubIcon,
   Code as CodeIcon,
   Delete as DeleteIcon,
-  AutoAwesome as MagicIcon
+  AutoAwesome as MagicIcon,
+  Mic as MicIcon,
+  MicOff as MicOffIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -53,6 +56,27 @@ interface GitHubRepo {
   language: string;
 }
 
+// Interface for SpeechRecognition to avoid TypeScript errors
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onresult: (event: any) => void;
+  onerror: (event: any) => void;
+  onend: () => void;
+}
+
+// Global SpeechRecognition constructor property
+declare global {
+  interface Window {
+    SpeechRecognition: new () => SpeechRecognition;
+    webkitSpeechRecognition: new () => SpeechRecognition;
+  }
+}
+
 const AgentChat: React.FC = () => {
   const theme = useTheme();
   const [query, setQuery] = useState('');
@@ -61,6 +85,8 @@ const AgentChat: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showAlert, setShowAlert] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   // Animation variants
   const containerVariants = {
@@ -94,11 +120,45 @@ const AgentChat: React.FC = () => {
   useEffect(() => {
     const systemMessage: Message = {
       id: 'system-welcome',
-      content: 'Welcome to Agent Chat! You can ask questions like "Show me my GitHub repositories" or "What tools are available?". Note that GROQ API integration must be properly configured for this to work fully.',
+      content: 'Welcome to Agent Chat! You can ask questions like "Show me my GitHub repositories" or You can also use the microphone button to speak your query.',
       sender: 'system',
       timestamp: new Date()
     };
     setMessages([systemMessage]);
+
+    // Initialize speech recognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = false;
+      recognitionRef.current.lang = 'en-US';
+
+      recognitionRef.current.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setQuery(transcript);
+        // Auto-submit after voice input
+        setTimeout(() => {
+          handleVoiceSubmit(transcript);
+        }, 500);
+      };
+
+      recognitionRef.current.onerror = (event) => {
+        console.error('Speech recognition error', event);
+        setIsListening(false);
+      };
+
+      recognitionRef.current.onend = () => {
+        setIsListening(false);
+      };
+    }
+
+    return () => {
+      // Cleanup speech recognition
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
+    };
   }, []);
 
   // Scroll to bottom whenever messages change
@@ -242,6 +302,34 @@ const AgentChat: React.FC = () => {
         content: `Failed to access GitHub API: ${err instanceof Error ? err.message : 'Unknown error'}`,
         success: false
       };
+    }
+  };
+
+  const handleVoiceSubmit = (transcript: string) => {
+    if (!transcript.trim()) return;
+
+    // Create form event-like object for handleSubmit
+    const fakeEvent = {
+      preventDefault: () => {}
+    } as React.FormEvent;
+    
+    // Set the query and trigger the submit
+    setQuery(transcript);
+    handleSubmit(fakeEvent);
+  };
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      alert('Speech recognition is not supported in your browser.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      recognitionRef.current.start();
+      setIsListening(true);
     }
   };
 
@@ -713,24 +801,52 @@ const AgentChat: React.FC = () => {
           InputProps={{
             endAdornment: (
               <InputAdornment position="end">
-                <motion.div
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                >
-                  <IconButton
-                    color="primary"
-                    type="submit"
-                    disabled={loading || !query.trim()}
-                    sx={{
-                      bgcolor: 'rgba(0, 255, 255, 0.1)',
-                      '&:hover': {
-                        bgcolor: 'rgba(0, 255, 255, 0.2)',
-                      }
-                    }}
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <motion.div
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
                   >
-                    <SendIcon />
-                  </IconButton>
-                </motion.div>
+                    <Tooltip title={isListening ? "Stop listening" : "Speak your query"}>
+                      <IconButton
+                        color={isListening ? "secondary" : "primary"}
+                        onClick={toggleListening}
+                        disabled={loading}
+                        sx={{
+                          bgcolor: isListening ? 'rgba(255, 0, 255, 0.1)' : 'rgba(0, 255, 255, 0.1)',
+                          '&:hover': {
+                            bgcolor: isListening ? 'rgba(255, 0, 255, 0.2)' : 'rgba(0, 255, 255, 0.2)',
+                          },
+                          animation: isListening ? 'pulse 1.5s infinite' : 'none',
+                          '@keyframes pulse': {
+                            '0%': { opacity: 1 },
+                            '50%': { opacity: 0.6 },
+                            '100%': { opacity: 1 },
+                          }
+                        }}
+                      >
+                        {isListening ? <MicOffIcon /> : <MicIcon />}
+                      </IconButton>
+                    </Tooltip>
+                  </motion.div>
+                  <motion.div
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    <IconButton
+                      color="primary"
+                      type="submit"
+                      disabled={loading || !query.trim()}
+                      sx={{
+                        bgcolor: 'rgba(0, 255, 255, 0.1)',
+                        '&:hover': {
+                          bgcolor: 'rgba(0, 255, 255, 0.2)',
+                        }
+                      }}
+                    >
+                      <SendIcon />
+                    </IconButton>
+                  </motion.div>
+                </Box>
               </InputAdornment>
             ),
             sx: {
