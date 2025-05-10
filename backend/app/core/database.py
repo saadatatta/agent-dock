@@ -24,4 +24,5 @@ def init_models():
     """Import all models to ensure they are registered with Base."""
     # Import models here to avoid circular imports
     from ..models.agent import Agent
-    from ..models.tool import Tool, ToolLog 
+    from ..models.tool import Tool, ToolLog
+    from ..models.settings import Settings 

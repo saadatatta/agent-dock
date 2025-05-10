@@ -116,6 +116,40 @@ async def get_tool_logs(
         message="Tool logs retrieved successfully"
     )
 
+@router.get("/logs", response_model=ToolLogListResponse)
+async def get_all_logs(
+    skip: int = 0,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """Get all tool logs"""
+    logs = tool_service.get_all_logs(db, skip=skip, limit=limit)
+    total = tool_service.count_logs(db)
+    return ToolLogListResponse(
+        status="success",
+        data=logs,
+        total=total,
+        message="All tool logs retrieved successfully"
+    )
+
+@router.delete("/logs/{log_id}", response_model=ToolLogResponse)
+async def delete_log(
+    log_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete a specific log"""
+    deleted_log = tool_service.delete_log(db, log_id)
+    if not deleted_log:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Log not found"
+        )
+    return ToolLogResponse(
+        status="success",
+        data=deleted_log,
+        message="Log deleted successfully"
+    )
+
 @router.post("/{tool_id}/github/{action}", response_model=ToolResponse)
 async def execute_github_action(
     tool_id: int,

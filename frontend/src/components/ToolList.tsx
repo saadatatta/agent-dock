@@ -19,7 +19,12 @@ import {
   CircularProgress,
   Backdrop,
   Tooltip,
-  Avatar
+  Avatar,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  FormHelperText
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -43,8 +48,8 @@ const ToolList: React.FC = () => {
   const [formData, setFormData] = useState<Omit<Tool, 'id'>>({
     name: '',
     description: '',
-    api_endpoint: '',
-    parameters: {},
+    type: '',
+    config: {},
     is_active: true
   });
   const [error, setError] = useState<string | null>(null);
@@ -74,8 +79,8 @@ const ToolList: React.FC = () => {
       setFormData({
         name: tool.name,
         description: tool.description,
-        api_endpoint: tool.api_endpoint,
-        parameters: tool.parameters,
+        type: tool.type,
+        config: tool.config,
         is_active: tool.is_active
       });
     } else {
@@ -83,8 +88,8 @@ const ToolList: React.FC = () => {
       setFormData({
         name: '',
         description: '',
-        api_endpoint: '',
-        parameters: {},
+        type: '',
+        config: {},
         is_active: true
       });
     }
@@ -97,6 +102,17 @@ const ToolList: React.FC = () => {
   };
 
   const handleSubmit = async () => {
+    // Validate required fields
+    if (!formData.name) {
+      setError('Tool name is required');
+      return;
+    }
+    
+    if (!formData.type) {
+      setError('Tool type is required');
+      return;
+    }
+
     try {
       if (editingTool) {
         await toolApi.updateTool(editingTool.id, formData);
@@ -107,8 +123,33 @@ const ToolList: React.FC = () => {
       }
       handleClose();
       fetchTools();
-    } catch (error) {
-      setError('Failed to save tool');
+    } catch (error: any) {
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        const errorData = error.response.data;
+        if (errorData.detail) {
+          if (typeof errorData.detail === 'string') {
+            setError(`Failed to save tool: ${errorData.detail}`);
+          } else if (Array.isArray(errorData.detail)) {
+            // Handle validation errors
+            const validationErrors = errorData.detail.map((err: any) => 
+              `${err.loc.join('.')} - ${err.msg}`
+            ).join(', ');
+            setError(`Validation error: ${validationErrors}`);
+          } else {
+            setError('Failed to save tool: Invalid request data');
+          }
+        } else {
+          setError(`Failed to save tool: Server error (${error.response.status})`);
+        }
+      } else if (error.request) {
+        // The request was made but no response was received
+        setError('Failed to save tool: No response from server');
+      } else {
+        // Something happened in setting up the request
+        setError(`Failed to save tool: ${error.message}`);
+      }
       console.error('Error saving tool:', error);
     }
   };
@@ -362,7 +403,7 @@ const ToolList: React.FC = () => {
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
                           <Chip
                             icon={<ApiIcon />}
-                            label="API Tool"
+                            label={tool.type ? tool.type.charAt(0).toUpperCase() + tool.type.slice(1) : "Unknown"}
                             size="small"
                             sx={{ 
                               background: 'rgba(255, 0, 255, 0.1)',
@@ -373,25 +414,14 @@ const ToolList: React.FC = () => {
                             }}
                           />
                           
-                          <Tooltip title="View API Endpoint">
-                            <motion.div
-                              whileHover={{ scale: 1.1 }}
-                              whileTap={{ scale: 0.9 }}
-                            >
-                              <IconButton
-                                color="secondary"
-                                size="small"
-                                sx={{ 
-                                  background: 'rgba(255, 0, 255, 0.1)',
-                                  '&:hover': {
-                                    background: 'rgba(255, 0, 255, 0.2)',
-                                  }
-                                }}
-                              >
-                                <LinkIcon fontSize="small" />
-                              </IconButton>
-                            </motion.div>
-                          </Tooltip>
+                          <Chip
+                            label={tool.is_active ? "Active" : "Inactive"}
+                            size="small"
+                            color={tool.is_active ? "success" : "default"}
+                            sx={{ 
+                              borderRadius: '10px',
+                            }}
+                          />
                         </Box>
                       </CardContent>
                     </Card>
@@ -431,6 +461,9 @@ const ToolList: React.FC = () => {
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               margin="normal"
               variant="outlined"
+              required
+              error={!formData.name && formData.name !== undefined}
+              helperText={!formData.name && formData.name !== undefined ? "Name is required" : ""}
               InputProps={{
                 sx: {
                   borderRadius: 2,
@@ -441,11 +474,11 @@ const ToolList: React.FC = () => {
             <TextField
               fullWidth
               label="Description"
+              multiline
+              rows={2}
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               margin="normal"
-              multiline
-              rows={2}
               variant="outlined"
               InputProps={{
                 sx: {
@@ -454,44 +487,77 @@ const ToolList: React.FC = () => {
                 }
               }}
             />
+            <FormControl fullWidth margin="normal" variant="outlined">
+              <InputLabel id="tool-type-label">Type</InputLabel>
+              <Select
+                labelId="tool-type-label"
+                id="tool-type"
+                value={formData.type}
+                onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                label="Type"
+                sx={{ borderRadius: 2, background: 'rgba(0, 0, 0, 0.2)' }}
+                required
+              >
+                <MenuItem value="" disabled>
+                  <em>Select a tool type</em>
+                </MenuItem>
+                {TOOL_TYPES.map((type) => (
+                  <MenuItem key={type} value={type}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>
+                Tool type is required. Supported types: github, slack, jira.
+              </FormHelperText>
+            </FormControl>
             <TextField
               fullWidth
-              label="API Endpoint"
-              value={formData.api_endpoint}
-              onChange={(e) => setFormData({ ...formData, api_endpoint: e.target.value })}
-              margin="normal"
-              variant="outlined"
-              InputProps={{
-                sx: {
-                  borderRadius: 2,
-                  background: 'rgba(0, 0, 0, 0.2)',
-                  fontFamily: '"Fira Code", monospace',
-                }
-              }}
-            />
-            <TextField
-              fullWidth
-              label="Parameters (JSON)"
-              value={JSON.stringify(formData.parameters, null, 2)}
+              label="Config (JSON)"
+              value={JSON.stringify(formData.config, null, 2)}
               onChange={(e) => {
                 try {
-                  const parameters = JSON.parse(e.target.value);
-                  setFormData({ ...formData, parameters });
-                } catch (error) {
-                  // Allow invalid JSON while editing
+                  const config = JSON.parse(e.target.value);
+                  setFormData({ ...formData, config });
+                  // Clear any previous JSON error
+                  if (error && error.includes('JSON')) {
+                    setError(null);
+                  }
+                } catch (err) {
+                  // Allow invalid JSON while editing, but don't update the state
+                  if (e.target.value.trim() && e.target.value !== '{}') {
+                    setError('Invalid JSON format. Please correct before submitting.');
+                  } else if (e.target.value.trim() === '') {
+                    setFormData({ ...formData, config: {} });
+                    if (error && error.includes('JSON')) {
+                      setError(null);
+                    }
+                  }
                 }
               }}
               margin="normal"
+              variant="outlined"
               multiline
               rows={4}
-              variant="outlined"
               InputProps={{
                 sx: {
                   borderRadius: 2,
                   background: 'rgba(0, 0, 0, 0.2)',
-                  fontFamily: '"Fira Code", monospace',
+                  fontFamily: '"Fira Code", monospace'
                 }
               }}
+              helperText={
+                <React.Fragment>
+                  {formData.type === 'slack' ? 
+                    'Example: {"workspace": "your-workspace", "channel": "general"}' :
+                  formData.type === 'github' ?
+                    'Example: {"owner": "username", "repo": "repository-name"}' :
+                  formData.type === 'jira' ?
+                    'Example: {"instance": "your-instance.atlassian.net", "project": "PROJECT"}' :
+                    'Enter configuration as JSON object'}
+                </React.Fragment>
+              }
+              error={error !== null && error.includes('JSON')}
             />
           </Box>
         </DialogContent>
@@ -514,11 +580,16 @@ const ToolList: React.FC = () => {
               onClick={handleSubmit} 
               variant="contained"
               color="secondary"
+              disabled={!formData.name || !formData.type}
               sx={{ 
                 borderRadius: 2,
                 px: 3,
                 background: 'linear-gradient(45deg, #FF00FF, #CC00FF)',
-                boxShadow: '0 4px 10px 0 rgba(255,0,255,0.25)',
+                boxShadow: '0 4px 20px 0 rgba(255,0,255,0.25)',
+                '&.Mui-disabled': {
+                  background: 'rgba(255, 0, 255, 0.1)',
+                  color: 'rgba(255, 255, 255, 0.3)'
+                }
               }}
             >
               {editingTool ? 'Update' : 'Create'}

@@ -56,6 +56,10 @@ class ToolService:
         if not db_tool:
             return None
 
+        # Delete associated logs first to avoid foreign key constraint violations
+        db.query(ToolLog).filter(ToolLog.tool_id == tool_id).delete(synchronize_session=False)
+        
+        # Now delete the tool
         db.delete(db_tool)
         db.commit()
         return db_tool
@@ -77,6 +81,24 @@ class ToolService:
     def get_tool_logs(self, db: Session, tool_id: int, skip: int = 0, limit: int = 10) -> List[ToolLog]:
         """Get logs for a specific tool"""
         return db.query(ToolLog).filter(ToolLog.tool_id == tool_id).offset(skip).limit(limit).all()
+
+    def get_all_logs(self, db: Session, skip: int = 0, limit: int = 10) -> List[ToolLog]:
+        """Get all tool logs"""
+        return db.query(ToolLog).offset(skip).limit(limit).all()
+
+    def count_logs(self, db: Session) -> int:
+        """Count total number of logs"""
+        return db.query(ToolLog).count()
+
+    def delete_log(self, db: Session, log_id: int) -> Optional[ToolLog]:
+        """Delete a log"""
+        db_log = db.query(ToolLog).filter(ToolLog.id == log_id).first()
+        if not db_log:
+            return None
+
+        db.delete(db_log)
+        db.commit()
+        return db_log
 
     def execute_github_action(self, db: Session, tool_id: int, action: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a GitHub action"""
