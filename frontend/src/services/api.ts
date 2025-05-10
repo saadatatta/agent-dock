@@ -45,6 +45,11 @@ export const agentApi = {
     const response = await api.delete(`/agents/${agentId}/tools/${toolId}`);
     return response.data;
   },
+
+  executeAgent: async (agentId: number, actionData: { action: string, parameters: any }): Promise<ApiResponse<any>> => {
+    const response = await api.post(`/agents/${agentId}/execute`, actionData);
+    return response.data;
+  }
 };
 
 export const toolApi = {
@@ -74,19 +79,19 @@ export const toolApi = {
   },
 
   getToolLogs: async (toolId: number, skip = 0, limit = 10): Promise<PaginatedResponse<ToolLog>> => {
-    const response = await api.get(`/tools/${toolId}/logs?skip=${skip}&limit=${limit}`);
+    const response = await api.get(`/logs/tool/${toolId}?skip=${skip}&limit=${limit}`);
     return response.data;
   },
 };
 
 export const logApi = {
   getAllLogs: async (skip = 0, limit = 10): Promise<PaginatedResponse<ToolLog>> => {
-    const response = await api.get(`/tools/logs?skip=${skip}&limit=${limit}`);
+    const response = await api.get(`/logs/?skip=${skip}&limit=${limit}`);
     return response.data;
   },
 
   deleteLog: async (logId: number): Promise<ApiResponse<ToolLog>> => {
-    const response = await api.delete(`/tools/logs/${logId}`);
+    const response = await api.delete(`/logs/${logId}`);
     return response.data;
   }
 };

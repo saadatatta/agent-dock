@@ -8,10 +8,11 @@ from typing import Dict, Any, List, Tuple
 import logging
 from sqlalchemy.orm import Session
 from ..models.agent import Agent
-from ..models.tool import Tool
+from ..models.tool import Tool, ToolLog
 from .agent_service import AgentService
 from .tool_service import ToolService
 from .settings_service import SettingsService
+import html
 
 logger = logging.getLogger(__name__)
 
@@ -70,23 +71,187 @@ class NaturalLanguageService:
         except json.JSONDecodeError:
             # If that fails, try to extract JSON using regex
             try:
+                # Try to find JSON content within triple backticks (common in markdown)
+                json_match = re.search(r'```(?:json)?\s*({.*?}|[\[\{][\s\S]*?[\]\}])\s*```', text, re.DOTALL)
+                if json_match:
+                    json_content = json_match.group(1).strip()
+                    return json.loads(json_content)
+                
                 # Find content between curly braces (including nested ones)
-                json_match = re.search(r'({.*})', text, re.DOTALL)
+                json_match = re.search(r'({[\s\S]*?})(?:\s|$)', text, re.DOTALL)
                 if json_match:
-                    return json.loads(json_match.group(1))
+                    json_content = json_match.group(1).strip()
+                    logger.debug(f"Extracted JSON with curly braces: {json_content}")
+                    return json.loads(json_content)
+                
                 # If no curly braces, try square brackets for arrays
-                json_match = re.search(r'(\[.*\])', text, re.DOTALL)
+                json_match = re.search(r'(\[[\s\S]*?\])(?:\s|$)', text, re.DOTALL)
                 if json_match:
-                    return json.loads(json_match.group(1))
+                    json_content = json_match.group(1).strip()
+                    logger.debug(f"Extracted JSON with square brackets: {json_content}")
+                    return json.loads(json_content)
+                
+                # Last attempt - find anything that looks like JSON
+                json_match = re.search(r'([\{\[][\s\S]*?[\}\]])(?:\s|$)', text, re.DOTALL)
+                if json_match:
+                    json_content = json_match.group(1).strip()
+                    logger.debug(f"Extracted potential JSON content: {json_content}")
+                    return json.loads(json_content)
+                
+                logger.error(f"Could not extract valid JSON from response: {text[:200]}...")
                 raise ValueError("Could not extract valid JSON from response")
             except Exception as e:
                 logger.error(f"Failed to extract JSON from response: {e}")
-                logger.debug(f"Response text: {text}")
+                logger.debug(f"Response text: {text[:200]}...")
                 # Return a default response as fallback
                 return {"agent_id": None, "action": "default", "parameters": {}}
 
-    def _get_llm_response(self, db: Session, messages: List[Dict[str, str]]) -> str:
-        """Get a response from the active LLM model"""
+    def _format_response_for_humans(self, response_data: Dict[str, Any]) -> str:
+        """Format JSON response data into human-readable text"""
+        try:
+            # If this is an error, just return the error message
+            if response_data.get("error"):
+                return f"Error: {response_data['error']}"
+                
+            # If this is a GitHub repository response
+            if "repos" in response_data or "repositories" in response_data:
+                repos = response_data.get("repos") or response_data.get("repositories") or []
+                if not repos:
+                    return "No repositories found."
+                    
+                result = "Here are your GitHub repositories:\n\n"
+                for repo in repos:
+                    name = repo.get("name", "Unnamed repository")
+                    desc = repo.get("description", "No description available")
+                    url = repo.get("html_url") or repo.get("url", "#")
+                    stars = repo.get("stargazers_count") or repo.get("stars", 0)
+                    
+                    result += f"- **{name}**: {desc}\n"
+                    result += f"  Stars: {stars} | URL: {url}\n\n"
+                    
+                return result
+                
+            # If this is a pull request response
+            if "pull_requests" in response_data:
+                prs = response_data.get("pull_requests", [])
+                if not prs:
+                    return "No pull requests found."
+                    
+                result = "Here are the pull requests:\n\n"
+                for pr in prs:
+                    title = pr.get("title", "Untitled PR")
+                    number = pr.get("number", "?")
+                    state = pr.get("state", "unknown")
+                    creator = pr.get("user", {}).get("login", "unknown")
+                    
+                    result += f"- **#{number}: {title}**\n"
+                    result += f"  State: {state} | Created by: {creator}\n\n"
+                    
+                return result
+                
+            # If this is a Slack response
+            if "channel" in response_data:
+                channel = response_data.get("channel", "")
+                
+                # First, check if 'sent' field is present (our Slack Agent uses this)
+                if "sent" in response_data and response_data["sent"]:
+                    return f"Message successfully sent to {channel} channel."
+                    
+                # Next, check direct "ok" field (direct Slack API responses)
+                elif response_data.get("ok", False):
+                    return f"Message successfully sent to {channel} channel."
+                
+                # Check if 'success' field exists and contains an object with 'ok' field
+                elif "success" in response_data and isinstance(response_data["success"], dict) and response_data["success"].get("ok", False):
+                    return f"Message successfully sent to {channel} channel."
+                
+                # Finally, check if "ok" is nested in "details" (our Slack Agent structure)
+                elif "details" in response_data and isinstance(response_data["details"], dict) and response_data["details"].get("ok", False):
+                    return f"Message successfully sent to {channel} channel."
+                    
+                # If none of the above, it's an error
+                else:
+                    error = response_data.get("error", "unknown error")
+                    # Try to get error from details if it exists
+                    if "details" in response_data and isinstance(response_data["details"], dict) and "error" in response_data["details"]:
+                        error = response_data["details"]["error"]
+                    return f"Failed to send message to {channel} channel: {error}"
+            
+            # Generic response formatter for other data types
+            if isinstance(response_data, dict):
+                # Try to find commonly useful fields to display
+                result = ""
+                
+                # Display message field if present
+                if "message" in response_data:
+                    result += f"{response_data['message']}\n\n"
+                
+                # Display name/title fields if present
+                for key in ["name", "title", "subject"]:
+                    if key in response_data:
+                        result += f"{key.capitalize()}: {response_data[key]}\n"
+                
+                # Display status if present
+                if "status" in response_data:
+                    result += f"Status: {response_data['status']}\n"
+                
+                # If there's a count field, display it
+                if "count" in response_data:
+                    result += f"Count: {response_data['count']}\n"
+                
+                # If nothing useful was found or result is still empty, return a simplified JSON version
+                if not result:
+                    # Clean up the dictionary by removing any huge nested objects
+                    clean_dict = {}
+                    for k, v in response_data.items():
+                        if isinstance(v, (dict, list)) and len(str(v)) > 100:
+                            clean_dict[k] = f"[Complex {type(v).__name__}]"
+                        else:
+                            clean_dict[k] = v
+                    
+                    result = "Here's what I found:\n\n"
+                    for k, v in clean_dict.items():
+                        if k != "raw_response" and k != "details":
+                            result += f"- **{k}**: {v}\n"
+                
+                return result
+            
+            # For list responses
+            if isinstance(response_data, list):
+                if not response_data:
+                    return "No items found."
+                
+                result = "Here's what I found:\n\n"
+                for i, item in enumerate(response_data[:10], 1):  # Limit to first 10
+                    if isinstance(item, dict):
+                        # Try to get a name or title for each item
+                        name = None
+                        for key in ["name", "title", "id"]:
+                            if key in item:
+                                name = item[key]
+                                break
+                        
+                        if name:
+                            result += f"{i}. **{name}**\n"
+                        else:
+                            result += f"{i}. Item {i}\n"
+                    else:
+                        result += f"{i}. {str(item)}\n"
+                
+                if len(response_data) > 10:
+                    result += f"\n... and {len(response_data) - 10} more items."
+                
+                return result
+            
+            # Fallback for other types
+            return str(response_data)
+            
+        except Exception as e:
+            logger.error(f"Error formatting response: {e}")
+            return "I received information but couldn't format it properly. Here's what I know: " + str(response_data)
+
+    def _get_llm_response(self, db: Session, messages: List[Dict[str, str]]) -> Tuple[str, Dict[str, Any]]:
+        """Get a response from the active LLM model and return token usage information"""
         # Get the active model from settings
         model_key, model_config = self.settings_service.get_active_llm_model(db)
         provider = model_config.get("provider", "groq")
@@ -94,6 +259,14 @@ class NaturalLanguageService:
         parameters = model_config.get("parameters", {})
         
         logger.info(f"Using LLM model: {provider}/{model_name}")
+        
+        usage_data = {
+            "provider": provider,
+            "model": model_name,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0
+        }
         
         try:
             if provider == "groq":
@@ -104,7 +277,16 @@ class NaturalLanguageService:
                     temperature=parameters.get("temperature", 0.1),
                     max_tokens=parameters.get("max_tokens", 1000)
                 )
-                return response.choices[0].message.content
+                content = response.choices[0].message.content
+                logger.debug(f"Raw response from {provider}/{model_name}: {content[:100]}...")
+                
+                # Get usage if available
+                if hasattr(response, 'usage'):
+                    usage_data["input_tokens"] = getattr(response.usage, "prompt_tokens", 0)
+                    usage_data["output_tokens"] = getattr(response.usage, "completion_tokens", 0)
+                    usage_data["total_tokens"] = getattr(response.usage, "total_tokens", 0)
+                
+                return content, usage_data
                 
             elif provider == "openai":
                 client = self._initialize_llm_client(provider)
@@ -114,7 +296,16 @@ class NaturalLanguageService:
                     temperature=parameters.get("temperature", 0.1),
                     max_tokens=parameters.get("max_tokens", 1000)
                 )
-                return response.choices[0].message.content
+                content = response.choices[0].message.content
+                logger.debug(f"Raw response from {provider}/{model_name}: {content[:100]}...")
+                
+                # Get usage if available
+                if hasattr(response, 'usage'):
+                    usage_data["input_tokens"] = getattr(response.usage, "prompt_tokens", 0)
+                    usage_data["output_tokens"] = getattr(response.usage, "completion_tokens", 0)
+                    usage_data["total_tokens"] = getattr(response.usage, "total_tokens", 0)
+                
+                return content, usage_data
                 
             elif provider == "anthropic":
                 client = self._initialize_llm_client(provider)
@@ -128,7 +319,16 @@ class NaturalLanguageService:
                     temperature=parameters.get("temperature", 0.1),
                     max_tokens=parameters.get("max_tokens", 1000)
                 )
-                return response.content[0].text
+                content = response.content[0].text
+                logger.debug(f"Raw response from {provider}/{model_name}: {content[:100]}...")
+                
+                # Get usage if available
+                if hasattr(response, 'usage'):
+                    usage_data["input_tokens"] = getattr(response.usage, "input_tokens", 0)
+                    usage_data["output_tokens"] = getattr(response.usage, "output_tokens", 0)
+                    usage_data["total_tokens"] = getattr(response.usage, "input_tokens", 0) + getattr(response.usage, "output_tokens", 0)
+                
+                return content, usage_data
                 
             else:
                 raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -144,6 +344,25 @@ class NaturalLanguageService:
             agents = self.agent_service.get_agents(db)
             tools = self.tool_service.get_tools(db)
 
+            # Find the GitHub agent if it exists and is active
+            github_agent = next((agent for agent in agents if "github" in agent.name.lower() and agent.is_active), None)
+            github_agent_id = github_agent.id if github_agent else None
+            
+            # Find the Slack agent if it exists and is active
+            slack_agent = next((agent for agent in agents if "slack" in agent.name.lower() and agent.is_active), None)
+            slack_agent_id = slack_agent.id if slack_agent else None
+
+            # Check if this is a GitHub repository-related query
+            is_github_related = any(keyword in query.lower() for keyword in ["github", "repo", "repository", "pull request", "pr", "issue", "commit"])
+            
+            # Check if this is a Slack message-related query
+            is_slack_related = any(keyword in query.lower() for keyword in ["slack", "message", "send", "post", "channel", "dm", "direct message"])
+            
+            # Get model configuration
+            model_key, model_config = self.settings_service.get_active_llm_model(db)
+            provider = model_config.get("provider", "groq")
+            model_name = model_config.get("model_name", "llama-3.3-70b-versatile")
+            
             # Create context for the LLM
             context = {
                 "available_agents": [
@@ -166,35 +385,186 @@ class NaturalLanguageService:
                 ]
             }
 
-            # Create prompt for the LLM
-            prompt = f"""
-            Context:
-            Available Agents: {context['available_agents']}
-            Available Tools: {context['available_tools']}
+            # GitHub action mapping - maps common/intuitive names to actual supported actions
+            github_action_mapping = {
+                "list_repositories": "get_repositories",
+                "get_repos": "get_repositories",
+                "list_repos": "get_repositories",
+                "show_repositories": "get_repositories",
+                "show_repos": "get_repositories",
+                "my_repositories": "get_repositories",
+                "my_repos": "get_repositories",
+                "list_prs": "list_pull_requests",
+                "get_prs": "list_pull_requests",
+                "show_prs": "list_pull_requests",
+                "list_issues": "list_issues",
+                "get_issues": "list_issues",
+                "show_issues": "list_issues",
+            }
+            
+            # Slack action mapping - maps common/intuitive names to actual supported actions
+            slack_action_mapping = {
+                "send_message": "send_message",
+                "post_message": "send_message",
+                "send": "send_message",
+                "post": "send_message",
+                "message": "send_message",
+                "slack_message": "send_message",
+                "dm": "send_message"
+            }
 
-            User Query: {query}
+            # Create a more detailed prompt for GitHub-related queries
+            if is_github_related and github_agent_id:
+                # Extract repository name - look for patterns like "in repo X" or "in X repo" or just "X repo"
+                prompt = f"""
+                Context:
+                Available Agents: {context['available_agents']}
+                Available Tools: {context['available_tools']}
 
-            Please analyze the query and determine:
-            1. Which agent should handle this query
-            2. What action should be taken
-            3. What parameters are needed
+                User Query: {query}
 
-            Respond in JSON format:
-            {{
-                "agent_id": <agent_id>,
-                "action": <action_name>,
-                "parameters": {{
-                    <parameter_name>: <parameter_value>
+                This appears to be a GitHub-related query. You MUST extract the repository name correctly.
+
+                Here are some examples of how to parse GitHub queries:
+                1. "list pull requests in agent-dock repo" → agent_id: {github_agent_id}, action: "list_pull_requests", parameters: {{"repo": "agent-dock"}}
+                2. "show PRs in microsoft/vscode" → agent_id: {github_agent_id}, action: "list_pull_requests", parameters: {{"repo": "microsoft/vscode"}}
+                3. "get repository details for user/some-repo" → agent_id: {github_agent_id}, action: "get_repo_details", parameters: {{"repo": "user/some-repo"}}
+                4. "get PR #123 from agent-dock repository" → agent_id: {github_agent_id}, action: "get_pull_request_details", parameters: {{"repo": "agent-dock", "number": 123}}
+                5. "show my github repositories" → agent_id: {github_agent_id}, action: "get_repositories", parameters: {{}}
+                6. "list my repos" → agent_id: {github_agent_id}, action: "get_repositories", parameters: {{}}
+                7. "show github repos" → agent_id: {github_agent_id}, action: "get_repositories", parameters: {{}}
+
+                Important: If you see a repository name without owner (like just "agent-dock"), assume it's a valid repository name.
+                The GitHub agent requires the "repo" parameter for all repository-related operations EXCEPT for "get_repositories" which lists all repositories.
+                
+                Supported GitHub actions are: "get_repositories", "list_pull_requests", "get_pull_request_details", "list_issues"
+
+                Please analyze the query and determine:
+                1. Which agent should handle this query (likely GitHub agent)
+                2. What action should be taken
+                3. What parameters are needed
+
+                IMPORTANT: You must respond with ONLY a valid JSON object, nothing else. No explanations, no code blocks, no other text.
+                JSON RESPONSE FORMAT:
+                {{
+                    "agent_id": <agent_id or null if no suitable agent>,
+                    "action": <action_name or "default" if no specific action>,
+                    "parameters": {{
+                        <parameter_name>: <parameter_value>
+                    }}
                 }}
-            }}
-            """
+                """
+            # Create a detailed prompt for Slack-related queries
+            elif is_slack_related and slack_agent_id:
+                prompt = f"""
+                Context:
+                Available Agents: {context['available_agents']}
+                Available Tools: {context['available_tools']}
+
+                User Query: {query}
+
+                This appears to be a Slack-related query. You need to extract:
+                1. The channel name to send the message to
+                2. The message content to send
+
+                Here are some examples of how to parse Slack queries:
+                1. "send message to #general saying hello world" → agent_id: {slack_agent_id}, action: "send_message", parameters: {{"channel": "#general", "message": "hello world"}}
+                2. "post 'meeting at 3pm' in the team-updates channel" → agent_id: {slack_agent_id}, action: "send_message", parameters: {{"channel": "team-updates", "message": "meeting at 3pm"}}
+                3. "send 'project completed' to hackathon-channel" → agent_id: {slack_agent_id}, action: "send_message", parameters: {{"channel": "hackathon-channel", "message": "project completed"}}
+
+                Important: For channel names, don't include the # symbol unless it's explicitly in the query.
+                The Slack agent requires both "channel" and "message" parameters for all message operations.
+
+                Supported Slack actions are: "send_message"
+
+                Please analyze the query and determine:
+                1. Which agent should handle this query (the Slack agent)
+                2. What action should be taken (send_message)
+                3. What parameters are needed (channel and message)
+
+                IMPORTANT: You must respond with ONLY a valid JSON object, nothing else. No explanations, no code blocks, no other text.
+                JSON RESPONSE FORMAT:
+                {{
+                    "agent_id": <agent_id or null if no suitable agent>,
+                    "action": <action_name or "default" if no specific action>,
+                    "parameters": {{
+                        <parameter_name>: <parameter_value>
+                    }}
+                }}
+                """
+            else:
+                # Standard prompt for non-GitHub, non-Slack queries
+                prompt = f"""
+                Context:
+                Available Agents: {context['available_agents']}
+                Available Tools: {context['available_tools']}
+
+                User Query: {query}
+
+                Please analyze the query and determine:
+                1. Which agent should handle this query
+                2. What action should be taken
+                3. What parameters are needed
+
+                IMPORTANT: You must respond with ONLY a valid JSON object, nothing else. No explanations, no code blocks, no other text.
+                JSON RESPONSE FORMAT:
+                {{
+                    "agent_id": <agent_id or null if no suitable agent>,
+                    "action": <action_name or "default" if no specific action>,
+                    "parameters": {{
+                        <parameter_name>: <parameter_value>
+                    }}
+                }}
+                """
 
             # Get response from the active LLM
             try:
-                result = self._get_llm_response(
+                model_key, model_config = self.settings_service.get_active_llm_model(db)
+                provider = model_config.get("provider", "groq")
+                model_name = model_config.get("model_name", "llama-3.3-70b-versatile")
+                
+                # If this is a GitHub-related query but the GitHub agent is disabled, return a user-friendly message
+                if is_github_related and not github_agent_id:
+                    return {
+                        "status": "error",
+                        "message": "GitHub agent is disabled. Please enable it in the agents section to use GitHub features.",
+                        "human_readable": "The GitHub agent is currently disabled. Please enable it in the Agents management section to use GitHub-related features.",
+                        "model_info": {
+                            "provider": provider,
+                            "model": model_name
+                        },
+                        "token_usage": {
+                            "provider": provider,
+                            "model": model_name,
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "total_tokens": 0
+                        }
+                    }
+                
+                # If this is a Slack-related query but the Slack agent is disabled, return a user-friendly message
+                if is_slack_related and not slack_agent_id:
+                    return {
+                        "status": "error",
+                        "message": "Slack agent is disabled. Please enable it in the agents section to use Slack features.",
+                        "human_readable": "The Slack agent is currently disabled. Please enable it in the Agents management section to use Slack-related features.",
+                        "model_info": {
+                            "provider": provider,
+                            "model": model_name
+                        },
+                        "token_usage": {
+                            "provider": provider,
+                            "model": model_name,
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "total_tokens": 0
+                        }
+                    }
+                
+                result, usage_data = self._get_llm_response(
                     db,
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that processes natural language queries and converts them into structured actions."},
+                        {"role": "system", "content": "You are a helpful API response generator that ONLY outputs valid JSON. Never explain your reasoning or add any text outside the JSON. Even if you're uncertain, make a best guess and include it in the JSON structure."},
                         {"role": "user", "content": prompt}
                     ]
                 )
@@ -202,11 +572,58 @@ class NaturalLanguageService:
                 # Parse the response safely
                 action_plan = self._extract_json_from_response(result)
                 logger.info(f"Parsed action plan: {action_plan}")
+                
+                # If this is a GitHub-related query but no agent_id was assigned, check if the GitHub agent exists but is disabled
+                if is_github_related and not action_plan.get("agent_id") and not github_agent_id:
+                    # Find any inactive GitHub agent
+                    inactive_github_agent = next((agent for agent in agents if "github" in agent.name.lower() and not agent.is_active), None)
+                    if inactive_github_agent:
+                        return {
+                            "status": "error",
+                            "message": f"The GitHub agent is disabled. Please enable it in the agents section to use GitHub features.",
+                            "human_readable": f"The GitHub agent is currently disabled. Please enable it in the Agents management section to use GitHub-related features.",
+                            "model_info": {
+                                "provider": provider,
+                                "model": model_name
+                            },
+                            "token_usage": usage_data
+                        }
+                
+                # Similar check for Slack-related queries
+                if is_slack_related and not action_plan.get("agent_id") and not slack_agent_id:
+                    # Find any inactive Slack agent
+                    inactive_slack_agent = next((agent for agent in agents if "slack" in agent.name.lower() and not agent.is_active), None)
+                    if inactive_slack_agent:
+                        return {
+                            "status": "error",
+                            "message": f"The Slack agent is disabled. Please enable it in the agents section to use Slack features.",
+                            "human_readable": f"The Slack agent is currently disabled. Please enable it in the Agents management section to use Slack-related features.",
+                            "model_info": {
+                                "provider": provider,
+                                "model": model_name
+                            },
+                            "token_usage": usage_data
+                        }
+                
+                # Map GitHub actions if needed
+                if action_plan.get("agent_id") == github_agent_id and action_plan.get("action") in github_action_mapping:
+                    action_plan["action"] = github_action_mapping[action_plan["action"]]
+                    logger.info(f"Mapped GitHub action to: {action_plan['action']}")
+                
+                # Map Slack actions if needed
+                if action_plan.get("agent_id") == slack_agent_id and action_plan.get("action") in slack_action_mapping:
+                    action_plan["action"] = slack_action_mapping[action_plan["action"]]
+                    logger.info(f"Mapped Slack action to: {action_plan['action']}")
+                
             except Exception as e:
                 logger.error(f"Error calling language model: {str(e)}")
                 return {
                     "status": "error",
-                    "message": f"Error calling language model: {str(e)}"
+                    "message": f"Error calling language model: {str(e)}",
+                    "model_info": {
+                        "provider": provider,
+                        "model": model_name
+                    }
                 }
 
             # Execute the action
@@ -214,6 +631,19 @@ class NaturalLanguageService:
                 agent = self.agent_service.get_agent(db, action_plan["agent_id"])
                 if not agent:
                     raise ValueError(f"Agent {action_plan['agent_id']} not found")
+                    
+                # Check if the agent is active
+                if not agent.is_active:
+                    return {
+                        "status": "error",
+                        "message": f"The {agent.name} agent is disabled. Please enable it in the agents section to use its features.",
+                        "human_readable": f"The {agent.name} agent is currently disabled. Please enable it in the Agents management section to use its features.",
+                        "model_info": {
+                            "provider": provider,
+                            "model": model_name
+                        },
+                        "token_usage": usage_data
+                    }
 
                 # Execute the agent with the action plan
                 result = self.agent_service.execute_agent(
@@ -225,22 +655,77 @@ class NaturalLanguageService:
                     }
                 )
 
+                # Get a human-readable version of the response
+                human_readable = self._format_response_for_humans(result.get("result", {}))
+
+                # Create a tool log with all the details including LLM usage
+                # Check if there's a specific tool_id in the action plan
+                tool_id = action_plan.get("tool_id")
+                if not tool_id:
+                    # Try to find an appropriate tool to associate the log with
+                    if agent and agent.tools:
+                        # Use the first tool associated with the agent
+                        tool_id = agent.tools[0].id
+                    else:
+                        # Get any available tool
+                        all_tools = self.tool_service.get_tools(db)
+                        tool_id = all_tools[0].id if all_tools else None
+                
+                # Only log if we have a valid tool_id
+                if tool_id:
+                    self.tool_service.log_tool_action(
+                        db,
+                        tool_id,
+                        "nl_query",
+                        "success",
+                        {
+                            "query": query,
+                            "action_plan": action_plan,
+                            "raw_result": result,
+                            "llm": usage_data
+                        }
+                    )
+
                 return {
                     "status": "success",
                     "result": result,
-                    "action_plan": action_plan
+                    "action_plan": action_plan,
+                    "human_readable": human_readable,
+                    "model_info": {
+                        "provider": provider,
+                        "model": model_name
+                    },
+                    "token_usage": usage_data
                 }
             else:
                 return {
                     "status": "error",
-                    "message": "No suitable agent found for the query"
+                    "message": "No suitable agent found for the query",
+                    "model_info": {
+                        "provider": provider,
+                        "model": model_name
+                    },
+                    "token_usage": usage_data
                 }
 
         except Exception as e:
             logger.error(f"Error processing query: {str(e)}")
+            # Try to get the active model info even in case of error
+            try:
+                model_key, model_config = self.settings_service.get_active_llm_model(db)
+                provider = model_config.get("provider", "groq")
+                model_name = model_config.get("model_name", "llama-3.3-70b-versatile")
+                model_info = {
+                    "provider": provider,
+                    "model": model_name
+                }
+            except:
+                model_info = {"provider": "unknown", "model": "unknown"}
+                
             return {
                 "status": "error",
-                "message": str(e)
+                "message": str(e),
+                "model_info": model_info
             }
 
     def get_agent_suggestions(self, db: Session, query: str) -> List[Dict[str, Any]]:
@@ -255,7 +740,9 @@ class NaturalLanguageService:
             User Query: {query}
 
             Please suggest the most suitable agents for this query.
-            Respond in JSON format:
+            
+            IMPORTANT: You must respond with ONLY a valid JSON array, nothing else. No explanations, no code blocks, no other text.
+            JSON RESPONSE FORMAT:
             [
                 {{
                     "agent_id": <agent_id>,
@@ -269,7 +756,7 @@ class NaturalLanguageService:
                 result = self._get_llm_response(
                     db,
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant that suggests suitable agents for user queries."},
+                        {"role": "system", "content": "You are a helpful API response generator that ONLY outputs valid JSON. Never explain your reasoning or add any text outside the JSON. Even if you're uncertain, make a best guess and include it in the JSON structure."},
                         {"role": "user", "content": prompt}
                     ]
                 )

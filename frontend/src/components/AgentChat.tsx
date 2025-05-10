@@ -16,7 +16,12 @@ import {
   Link as MuiLink,
   useTheme,
   Paper,
-  InputAdornment
+  InputAdornment,
+  Tooltip,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -27,7 +32,13 @@ import {
   GitHub as GitHubIcon,
   Code as CodeIcon,
   Delete as DeleteIcon,
-  AutoAwesome as MagicIcon
+  AutoAwesome as MagicIcon,
+  Mic as MicIcon,
+  MicOff as MicOffIcon,
+  Memory as MemoryIcon,
+  MoreVert as MoreIcon,
+  History as HistoryIcon,
+  Save as SaveIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -42,6 +53,10 @@ interface Message {
   timestamp: Date;
   agentId?: number;
   agentName?: string;
+  modelInfo?: {
+    provider: string;
+    model: string;
+  };
 }
 
 interface GitHubRepo {
@@ -53,14 +68,57 @@ interface GitHubRepo {
   language: string;
 }
 
+// Interface for SpeechRecognition to avoid TypeScript errors
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onresult: (event: any) => void;
+  onerror: (event: any) => void;
+  onend: () => void;
+}
+
+// Global SpeechRecognition constructor property
+declare global {
+  interface Window {
+    SpeechRecognition: new () => SpeechRecognition;
+    webkitSpeechRecognition: new () => SpeechRecognition;
+  }
+}
+
+// New interface for chat sessions
+interface ChatSession {
+  session_id: string;
+  last_message: {
+    content: string;
+    sender: string;
+    created_at: string;
+  };
+  timestamp: string;
+}
+
 const AgentChat: React.FC = () => {
   const theme = useTheme();
   const [query, setQuery] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAlert, setShowAlert] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const [activeLLM, setActiveLLM] = useState<{provider: string, model: string}>({
+    provider: '',
+    model: ''
+  });
+  // New state for chat sessions
+  const [sessionId, setSessionId] = useState<string>('');
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
 
   // Animation variants
   const containerVariants = {
@@ -90,15 +148,160 @@ const AgentChat: React.FC = () => {
     }
   };
 
-  // Add a system message on component mount
+  // Function to save a message to the backend
+  const saveMessageToBackend = async (message: Message) => {
+    try {
+      // Skip saving system welcome message
+      if (message.id === 'system-welcome') return;
+      
+      const metadata: any = {};
+      
+      if (message.agentId) metadata.agent_id = message.agentId;
+      if (message.agentName) metadata.agent_name = message.agentName;
+      if (message.modelInfo) metadata.model_info = message.modelInfo;
+      
+      await axios.post('http://localhost:8000/api/v1/chat/messages', {
+        session_id: sessionId,
+        content: message.content,
+        sender: message.sender,
+        message_type: 'text',
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined
+      });
+    } catch (error) {
+      console.error('Error saving message:', error);
+      // Don't show error to user, just log it
+    }
+  };
+
+  // Load chat history when component mounts
   useEffect(() => {
-    const systemMessage: Message = {
-      id: 'system-welcome',
-      content: 'Welcome to Agent Chat! You can ask questions like "Show me my GitHub repositories" or "What tools are available?". Note that GROQ API integration must be properly configured for this to work fully.',
-      sender: 'system',
-      timestamp: new Date()
+    loadChatHistory();
+  }, []);
+
+  // Load chat history from the backend
+  const loadChatHistory = async (sid?: string) => {
+    try {
+      setLoadingHistory(true);
+      
+      const endpoint = sid 
+        ? `http://localhost:8000/api/v1/chat/messages?session_id=${sid}`
+        : 'http://localhost:8000/api/v1/chat/messages';
+        
+      const response = await axios.get(endpoint);
+      
+      if (response.data.status === 'success' && response.data.messages.length > 0) {
+        // Convert backend messages to our Message format
+        const historyMessages: Message[] = response.data.messages.map((msg: any) => ({
+          id: `db-${msg.id}`,
+          content: msg.content,
+          sender: msg.sender,
+          timestamp: new Date(msg.created_at),
+          agentId: msg.metadata?.agent_id,
+          agentName: msg.metadata?.agent_name,
+          modelInfo: msg.metadata?.model_info
+        }));
+        
+        setMessages(historyMessages);
+        setSessionId(response.data.session_id);
+      } else {
+        // If no history, show welcome message
+        const systemMessage: Message = {
+          id: 'system-welcome',
+          content: 'Welcome to Agent Chat! You can ask questions like "Show me my GitHub repositories" or You can also use the microphone button to speak your query.',
+          sender: 'system',
+          timestamp: new Date()
+        };
+        setMessages([systemMessage]);
+        
+        // Generate a new session ID if we don't have one
+        if (!sessionId) {
+          const newSessionResponse = await axios.post('http://localhost:8000/api/v1/chat/messages', {
+            content: systemMessage.content,
+            sender: systemMessage.sender,
+            message_type: 'text'
+          });
+          setSessionId(newSessionResponse.data.session_id);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading chat history:', error);
+      // Show a welcome message anyway
+      const systemMessage: Message = {
+        id: 'system-welcome',
+        content: 'Welcome to Agent Chat! You can ask questions like "Show me my GitHub repositories" or You can also use the microphone button to speak your query.',
+        sender: 'system',
+        timestamp: new Date()
+      };
+      setMessages([systemMessage]);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+  
+  // Load available chat sessions
+  const loadChatSessions = async () => {
+    try {
+      const response = await axios.get('http://localhost:8000/api/v1/chat/sessions');
+      if (response.data.status === 'success') {
+        setChatSessions(response.data.sessions);
+      }
+    } catch (error) {
+      console.error('Error loading chat sessions:', error);
+    }
+  };
+  
+  // Handle opening the history menu
+  const handleHistoryMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    loadChatSessions();
+    setMenuAnchorEl(event.currentTarget);
+  };
+  
+  // Handle closing the history menu
+  const handleHistoryMenuClose = () => {
+    setMenuAnchorEl(null);
+  };
+  
+  // Handle selecting a chat session
+  const handleSessionSelect = (sid: string) => {
+    loadChatHistory(sid);
+    handleHistoryMenuClose();
+  };
+
+  // Modified to initialize speech recognition
+  useEffect(() => {
+    // Speech recognition setup code - keep existing code
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = false;
+      recognitionRef.current.lang = 'en-US';
+
+      recognitionRef.current.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setQuery(transcript);
+        // Auto-submit after voice input
+        setTimeout(() => {
+          handleVoiceSubmit(transcript);
+        }, 500);
+      };
+
+      recognitionRef.current.onerror = (event) => {
+        console.error('Speech recognition error', event);
+        setIsListening(false);
+      };
+
+      recognitionRef.current.onend = () => {
+        setIsListening(false);
+      };
+    }
+
+    return () => {
+      // Cleanup speech recognition - keep existing code
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
     };
-    setMessages([systemMessage]);
   }, []);
 
   // Scroll to bottom whenever messages change
@@ -110,52 +313,125 @@ const AgentChat: React.FC = () => {
     setQuery(e.target.value);
   };
 
-  // Function to check if a query is GitHub related
+  // Function to check if a query is a GitHub-related query
   const isGitHubQuery = (q: string): boolean => {
     const lowerQuery = q.toLowerCase();
-    return (
-      lowerQuery.includes('github') || 
-      lowerQuery.includes('repository') || 
-      lowerQuery.includes('repositories') || 
-      lowerQuery.includes('repo') || 
-      lowerQuery.includes('repos')
-    );
+    
+    // Match simple "show my repositories" type queries
+    const basicRepoPatterns = [
+      /^(?:show|list|get)\s+(?:my|all)\s+(?:github\s+)?(?:repos|repositories)$/i,
+      /^github\s+(?:repos|repositories)$/i,
+      /^what\s+(?:repos|repositories)\s+do\s+i\s+have$/i
+    ];
+    
+    // Match PR-related queries
+    const prPatterns = [
+      /(?:show|list|get)\s+(?:pull\s+requests|prs)\s+(?:in|for|from)\s+(\S+)(?:\s+repo|\s+repository)?/i,
+      /(?:pull\s+requests|prs)\s+(?:in|for|from)\s+(\S+)(?:\s+repo|\s+repository)?/i
+    ];
+    
+    // Check if it's a basic repo query
+    const isBasicRepoQuery = basicRepoPatterns.some(pattern => pattern.test(lowerQuery));
+    
+    // Check if it's a PR query
+    const isPrQuery = prPatterns.some(pattern => pattern.test(lowerQuery));
+    
+    return isBasicRepoQuery || isPrQuery;
+  };
+  
+  // Function to extract repository name from query
+  const extractRepositoryName = (q: string): string | null => {
+    const lowerQuery = q.toLowerCase();
+    
+    // Look for patterns like "in repo X" or "in X repo" or just "X repo"
+    const repoPatterns = [
+      /(?:in|for|from)\s+(?:repo|repository)?\s*(\S+)(?:\s+repo|\s+repository)?/i,
+      /(?:repo|repository)\s+(\S+)/i
+    ];
+    
+    for (const pattern of repoPatterns) {
+      const match = q.match(pattern);
+      if (match && match[1]) {
+        return match[1].replace(/[,.;:'"]/g, ''); // Clean up any punctuation
+      }
+    }
+    
+    return null;
   };
 
-  // Function to handle GitHub specific queries directly
+  // Enhanced function to handle GitHub specific queries directly
   const handleGitHubQuery = async (): Promise<{content: string, success: boolean}> => {
     try {
-      // Test GitHub connection
+      // Test GitHub connection first
       const testResponse = await axios.post('http://localhost:8000/api/v1/tools/github/test');
       
       if (testResponse.data.status === 'success') {
-        // Fetch repositories
-        const reposResponse = await axios.post('http://localhost:8000/api/v1/tools/github/repos');
+        // Get the content from the last user message
+        const lastUserMessageContent = messages.filter(m => m.sender === 'user').pop()?.content || '';
+        const repoName = extractRepositoryName(lastUserMessageContent);
         
-        if (reposResponse.data.status === 'success') {
-          const repos: GitHubRepo[] = reposResponse.data.repos;
+        // If this is a PR request for specific repo
+        if (repoName && lastUserMessageContent.toLowerCase().includes('pull request')) {
+          // Execute using the agent directly
+          const response = await axios.post(`http://localhost:8000/api/v1/agents/3/execute`, {
+            action: "list_pull_requests",
+            parameters: {
+              repo: repoName,
+              state: "open"
+            }
+          });
           
-          // Format the repositories information
-          let reposContent = `# GitHub Repositories\n\n`;
-          
-          if (repos.length === 0) {
-            reposContent += "No repositories found.";
-          } else {
-            repos.forEach(repo => {
-              reposContent += `## ${repo.name}\n`;
-              if (repo.description) reposContent += `${repo.description}\n\n`;
-              reposContent += `- URL: ${repo.url}\n`;
-              reposContent += `- Stars: ${repo.stars}\n`;
-              reposContent += `- Forks: ${repo.forks}\n`;
-              if (repo.language) reposContent += `- Language: ${repo.language}\n`;
-              reposContent += `\n`;
-            });
+          if (response.data.status === 'success') {
+            const prs = response.data.data.pull_requests || [];
+            
+            // Format the PR information
+            let prsContent = `# Pull Requests for ${repoName}\n\n`;
+            
+            if (prs.length === 0) {
+              prsContent += "No open pull requests found.";
+            } else {
+              prs.forEach((pr: any) => {
+                prsContent += `## PR #${pr.number}: ${pr.title}\n`;
+                prsContent += `- State: ${pr.state}\n`;
+                prsContent += `- Created by: ${pr.user.login}\n`;
+                prsContent += `- URL: ${pr.url}\n\n`;
+              });
+            }
+            
+            return {
+              content: prsContent,
+              success: true
+            };
           }
+        } else {
+          // Handle repositories listing (original implementation)
+          const reposResponse = await axios.post('http://localhost:8000/api/v1/tools/github/repos');
           
-          return {
-            content: reposContent,
-            success: true
-          };
+          if (reposResponse.data.status === 'success') {
+            const repos: GitHubRepo[] = reposResponse.data.repos;
+            
+            // Format the repositories information
+            let reposContent = `# GitHub Repositories\n\n`;
+            
+            if (repos.length === 0) {
+              reposContent += "No repositories found.";
+            } else {
+              repos.forEach(repo => {
+                reposContent += `## ${repo.name}\n`;
+                if (repo.description) reposContent += `${repo.description}\n\n`;
+                reposContent += `- URL: ${repo.url}\n`;
+                reposContent += `- Stars: ${repo.stars}\n`;
+                reposContent += `- Forks: ${repo.forks}\n`;
+                if (repo.language) reposContent += `- Language: ${repo.language}\n`;
+                reposContent += `\n`;
+              });
+            }
+            
+            return {
+              content: reposContent,
+              success: true
+            };
+          }
         }
       }
       
@@ -172,105 +448,238 @@ const AgentChat: React.FC = () => {
     }
   };
 
+  const handleVoiceSubmit = (transcript: string) => {
+    if (!transcript.trim()) return;
+
+    // Create form event-like object for handleSubmit
+    const fakeEvent = {
+      preventDefault: () => {}
+    } as React.FormEvent;
+    
+    // Set the query and trigger the submit
+    setQuery(transcript);
+    handleSubmit(fakeEvent);
+  };
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      alert('Speech recognition is not supported in your browser.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      recognitionRef.current.start();
+      setIsListening(true);
+    }
+  };
+
+  // Modified handleSubmit to save messages to the backend
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
 
-    // Add user message to chat
+    // Add user message to the list
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: `user-${Date.now()}`,
       content: query,
       sender: 'user',
       timestamp: new Date()
     };
-    setMessages(prev => [...prev, userMessage]);
     
-    // Clear input and set loading
+    setMessages(prev => [...prev, userMessage]);
     setQuery('');
     setLoading(true);
-    setError(null);
+    
+    // Save user message to backend
+    await saveMessageToBackend(userMessage);
 
     try {
-      // Check if it's a GitHub related query
-      if (isGitHubQuery(userMessage.content)) {
-        // First try direct GitHub handling
-        const { content, success } = await handleGitHubQuery();
-        
-        // Add GitHub response
-        const gitHubMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content,
-          sender: success ? 'agent' : 'system',
-          timestamp: new Date(),
-          agentName: success ? 'GitHub Agent' : 'System'
-        };
-        
-        setMessages(prev => [...prev, gitHubMessage]);
-        
-        if (success) {
-          setLoading(false);
-          return; // Exit early if GitHub handling succeeded
-        }
-        // If GitHub handling failed, continue with NL processing
-      }
+      // Add a temporary agent message to indicate processing
+      const tempAgentId = `agent-temp-${Date.now()}`;
+      const tempAgentMessage: Message = {
+        id: tempAgentId,
+        content: "Thinking...",
+        sender: 'agent',
+        timestamp: new Date()
+      };
+      
+      setMessages(prev => [...prev, tempAgentMessage]);
 
-      // Send request to NL API
+      // Use the Natural Language processing endpoint to handle the query
       const response = await axios.post('http://localhost:8000/api/v1/nl/query', {
         query: userMessage.content
       });
 
-      if (response.data.status === 'success') {
-        // Format the result
-        let resultContent = '';
-        try {
-          if (typeof response.data.result === 'object') {
-            resultContent = JSON.stringify(response.data.result, null, 2);
-          } else {
-            resultContent = String(response.data.result);
-          }
-        } catch (e) {
-          resultContent = 'Received result but unable to format it: ' + String(response.data.result);
-        }
-
-        // Add agent response to chat
-        const agentMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: resultContent,
-          sender: 'agent',
-          timestamp: new Date(),
-          agentId: response.data.action_plan?.agent_id,
-          agentName: response.data.action_plan?.agent_name || 'AI Assistant'
-        };
-        setMessages(prev => [...prev, agentMessage]);
-      } else {
-        setError(response.data.message || 'Failed to process query');
+      // Replace the temporary message with the actual response
+      const result = response.data;
+      
+      // Update the active LLM info if available
+      if (result.model_info) {
+        setActiveLLM({
+          provider: result.model_info.provider,
+          model: result.model_info.model
+        });
       }
+      
+      let responseContent = '';
+      
+      if (result.status === 'success') {
+        // First try to use human_readable content if available
+        if (result.human_readable) {
+          responseContent = result.human_readable;
+        } else {
+          // Extract agent information from the result
+          const agentId = result.result?.agent_id || result.action_plan?.agent_id;
+          const agentName = result.result?.agent_name || '';
+          
+          if (result.result?.status === 'success') {
+            // Format successful response
+            if (typeof result.result.result === 'object') {
+              // For GitHib repository response - handle both "repos" and "repositories" keys for backward compatibility
+              if (result.result.result.repos || result.result.result.repositories) {
+                const repos = result.result.result.repos || result.result.result.repositories || [];
+                responseContent = `# GitHub Repositories\n\n`;
+                
+                if (repos.length === 0) {
+                  responseContent += "No repositories found.";
+                } else {
+                  repos.forEach((repo: any) => {
+                    responseContent += `## [${repo.name}](${repo.html_url || repo.url})\n`;
+                    responseContent += repo.description ? `${repo.description}\n` : '';
+                    responseContent += `- Stars: ${repo.stargazers_count || repo.stars || 0}\n`;
+                    responseContent += `- Forks: ${repo.forks_count || repo.forks || 0}\n`;
+                    responseContent += `- Language: ${repo.language || 'Not specified'}\n\n`;
+                  });
+                }
+              }
+              // For other structured responses, try to make them human-readable
+              else {
+                // Try to extract readable information from the result
+                responseContent = "";
+                
+                // Check if there's a message
+                if (result.result.result.message) {
+                  responseContent += result.result.result.message + "\n\n";
+                }
+                
+                // Check if there's key information that should be displayed
+                const importantKeys = ["name", "title", "description", "status", "count"];
+                let hasImportantInfo = false;
+                
+                for (const key of importantKeys) {
+                  if (result.result.result[key] !== undefined) {
+                    responseContent += `**${key.charAt(0).toUpperCase() + key.slice(1)}**: ${result.result.result[key]}\n`;
+                    hasImportantInfo = true;
+                  }
+                }
+                
+                // If no important info found, create a formatted JSON representation
+                if (!hasImportantInfo) {
+                  responseContent = `\`\`\`json\n${JSON.stringify(result.result.result, null, 2)}\n\`\`\``;
+                }
+              }
+            } else {
+              // For text responses
+              responseContent = result.result.result;
+            }
+          } else {
+            // Format error response
+            responseContent = `Error: ${result.result?.error || 'Unknown error'}`;
+            
+            // Special handling for GitHub API 404 errors
+            if (responseContent.includes("404") && responseContent.includes("https://api.github.com/repos/")) {
+              responseContent += "\n\nThe repository was not found. Please make sure to use the format 'owner/repo' (e.g., 'microsoft/vscode' not just 'vscode').";
+            }
+            
+            // If there are supported actions, include them
+            if (result.result?.supported_actions) {
+              responseContent += `\n\nSupported actions: ${result.result.supported_actions.join(", ")}`;
+            }
+          }
+        }
+      } else {
+        // Handle error from the NL service
+        responseContent = `Failed to process query: ${result.message || 'Unknown error'}`;
+      }
+
+      // Create the final agent message
+      const agentMessage: Message = {
+        id: `agent-${Date.now()}`,
+        content: responseContent,
+        sender: 'agent',
+        timestamp: new Date(),
+        agentId: result.result?.agent_id || result.action_plan?.agent_id,
+        agentName: result.result?.agent_name || 'Assistant',
+        modelInfo: result.model_info
+      };
+
+      // Replace the temporary message with the final one
+      setMessages(prev => prev.map(msg => 
+        msg.id === tempAgentId ? agentMessage : msg
+      ));
+      
+      // Save agent message to backend
+      await saveMessageToBackend(agentMessage);
+      
     } catch (error) {
       console.error('Error processing query:', error);
-      setError('Error processing query. Please try again.');
+      setError('Failed to process your query. Please try again.');
       
-      // Add system error message
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: 'Sorry, there was an error processing your query. Please try again later.',
-        sender: 'system',
+      // Update the temporary message to show the error
+      const errorMessage = {
+        id: `agent-${Date.now()}`,
+        content: 'Sorry, I encountered an error while processing your request.',
+        sender: 'agent' as const,
         timestamp: new Date()
       };
-      setMessages(prev => [...prev, errorMessage]);
+      
+      setMessages(prev => prev.map(msg => 
+        msg.id.startsWith('agent-temp') ? errorMessage : msg
+      ));
+      
+      // Save error message to backend
+      await saveMessageToBackend(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  const clearChat = () => {
+  // Modified clearChat to delete session from backend
+  const clearChat = async () => {
     if (window.confirm('Are you sure you want to clear the chat history?')) {
+      // If we have a session ID, delete it from the backend
+      if (sessionId) {
+        try {
+          await axios.delete(`http://localhost:8000/api/v1/chat/messages/${sessionId}`);
+        } catch (error) {
+          console.error('Error deleting chat session:', error);
+        }
+      }
+      
+      // Create a new system message
       const systemMessage: Message = {
         id: 'system-welcome',
         content: 'Chat history cleared. How can I assist you today?',
         sender: 'system',
         timestamp: new Date()
       };
+      
       setMessages([systemMessage]);
+      
+      // Generate a new session ID
+      try {
+        const response = await axios.post('http://localhost:8000/api/v1/chat/messages', {
+          content: systemMessage.content,
+          sender: systemMessage.sender,
+          message_type: 'text'
+        });
+        setSessionId(response.data.session_id);
+      } catch (error) {
+        console.error('Error creating new session:', error);
+      }
     }
   };
 
@@ -388,21 +797,132 @@ const AgentChat: React.FC = () => {
           Agent Chat
         </Typography>
         
-        <motion.div
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-        >
-          <Button
-            variant="outlined"
-            color="error"
-            startIcon={<DeleteIcon />}
-            onClick={clearChat}
-            size="small"
-            sx={{ borderRadius: 2 }}
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+          {activeLLM.provider && (
+            <Chip
+              icon={<MemoryIcon fontSize="small" />}
+              label={`${activeLLM.provider} / ${activeLLM.model.split('-')[0]}`}
+              size="small"
+              color="secondary"
+              variant="outlined"
+              sx={{ 
+                bgcolor: 'rgba(255, 0, 255, 0.05)',
+                border: '1px solid rgba(255, 0, 255, 0.2)',
+              }}
+            />
+          )}
+          
+          {/* History Menu Button */}
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
           >
-            Clear
-          </Button>
-        </motion.div>
+            <Tooltip title="Chat History">
+              <IconButton
+                onClick={handleHistoryMenuOpen}
+                size="small"
+                sx={{
+                  bgcolor: 'rgba(0, 153, 255, 0.1)',
+                  '&:hover': {
+                    bgcolor: 'rgba(0, 153, 255, 0.2)'
+                  }
+                }}
+              >
+                <HistoryIcon />
+              </IconButton>
+            </Tooltip>
+          </motion.div>
+          
+          {/* Chat Sessions Menu */}
+          <Menu
+            anchorEl={menuAnchorEl}
+            open={Boolean(menuAnchorEl)}
+            onClose={handleHistoryMenuClose}
+            PaperProps={{
+              sx: {
+                mt: 1.5,
+                maxHeight: 300,
+                width: 320,
+                overflow: 'auto',
+                backgroundColor: 'rgba(30, 30, 30, 0.95)',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+              }
+            }}
+          >
+            <Typography variant="subtitle2" sx={{ px: 2, py: 1, color: 'text.secondary' }}>
+              Recent Conversations
+            </Typography>
+            <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)' }} />
+            
+            {loadingHistory ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                <CircularProgress size={24} color="primary" />
+              </Box>
+            ) : chatSessions.length > 0 ? (
+              chatSessions.map((session) => (
+                <MenuItem 
+                  key={session.session_id} 
+                  onClick={() => handleSessionSelect(session.session_id)}
+                  sx={{ 
+                    borderRadius: 1,
+                    mx: 1,
+                    my: 0.5,
+                    '&:hover': { 
+                      bgcolor: 'rgba(255, 255, 255, 0.05)' 
+                    }
+                  }}
+                >
+                  <ListItemIcon>
+                    {session.last_message.sender === 'user' ? 
+                      <UserIcon fontSize="small" /> : 
+                      <AgentIcon fontSize="small" />
+                    }
+                  </ListItemIcon>
+                  <ListItemText 
+                    primary={
+                      <Typography 
+                        variant="body2" 
+                        noWrap 
+                        sx={{ maxWidth: 200 }}
+                      >
+                        {session.last_message.content}
+                      </Typography>
+                    }
+                    secondary={
+                      <Typography variant="caption" color="text.secondary">
+                        {new Date(session.timestamp).toLocaleString()}
+                      </Typography>
+                    }
+                  />
+                </MenuItem>
+              ))
+            ) : (
+              <MenuItem disabled>
+                <Typography variant="body2" color="text.secondary">
+                  No conversation history found
+                </Typography>
+              </MenuItem>
+            )}
+          </Menu>
+          
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DeleteIcon />}
+              onClick={clearChat}
+              size="small"
+              sx={{ borderRadius: 2 }}
+            >
+              Clear
+            </Button>
+          </motion.div>
+        </Box>
       </Box>
       
       <Collapse in={showAlert}>
@@ -536,13 +1056,22 @@ const AgentChat: React.FC = () => {
                             background: 'rgba(0,0,0,0.2)',
                             display: 'flex',
                             alignItems: 'center',
+                            justifyContent: 'space-between',
                             gap: 1
                           }}
                         >
-                          <MagicIcon fontSize="small" sx={{ color: theme.palette.secondary.main }} />
-                          <Typography variant="subtitle2" color="text.secondary">
-                            {message.agentName}
-                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <MagicIcon fontSize="small" sx={{ color: theme.palette.secondary.main }} />
+                            <Typography variant="subtitle2" color="text.secondary">
+                              {message.agentName}
+                            </Typography>
+                          </Box>
+                          
+                          {message.modelInfo && (
+                            <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.7 }}>
+                              via {message.modelInfo.provider}/{message.modelInfo.model.split('-')[0]}
+                            </Typography>
+                          )}
                         </Box>
                       )}
                       
@@ -600,7 +1129,7 @@ const AgentChat: React.FC = () => {
       >
         <TextField
           fullWidth
-          placeholder="Ask a question..."
+          placeholder={activeLLM.provider ? `Ask ${activeLLM.provider}...` : "Ask a question..."}
           value={query}
           onChange={handleQueryChange}
           variant="outlined"
@@ -608,24 +1137,52 @@ const AgentChat: React.FC = () => {
           InputProps={{
             endAdornment: (
               <InputAdornment position="end">
-                <motion.div
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                >
-                  <IconButton
-                    color="primary"
-                    type="submit"
-                    disabled={loading || !query.trim()}
-                    sx={{
-                      bgcolor: 'rgba(0, 255, 255, 0.1)',
-                      '&:hover': {
-                        bgcolor: 'rgba(0, 255, 255, 0.2)',
-                      }
-                    }}
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <motion.div
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
                   >
-                    <SendIcon />
-                  </IconButton>
-                </motion.div>
+                    <Tooltip title={isListening ? "Stop listening" : "Speak your query"}>
+                      <IconButton
+                        color={isListening ? "secondary" : "primary"}
+                        onClick={toggleListening}
+                        disabled={loading}
+                        sx={{
+                          bgcolor: isListening ? 'rgba(255, 0, 255, 0.1)' : 'rgba(0, 255, 255, 0.1)',
+                          '&:hover': {
+                            bgcolor: isListening ? 'rgba(255, 0, 255, 0.2)' : 'rgba(0, 255, 255, 0.2)',
+                          },
+                          animation: isListening ? 'pulse 1.5s infinite' : 'none',
+                          '@keyframes pulse': {
+                            '0%': { opacity: 1 },
+                            '50%': { opacity: 0.6 },
+                            '100%': { opacity: 1 },
+                          }
+                        }}
+                      >
+                        {isListening ? <MicOffIcon /> : <MicIcon />}
+                      </IconButton>
+                    </Tooltip>
+                  </motion.div>
+                  <motion.div
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    <IconButton
+                      color="primary"
+                      type="submit"
+                      disabled={loading || !query.trim()}
+                      sx={{
+                        bgcolor: 'rgba(0, 255, 255, 0.1)',
+                        '&:hover': {
+                          bgcolor: 'rgba(0, 255, 255, 0.2)',
+                        }
+                      }}
+                    >
+                      <SendIcon />
+                    </IconButton>
+                  </motion.div>
+                </Box>
               </InputAdornment>
             ),
             sx: {

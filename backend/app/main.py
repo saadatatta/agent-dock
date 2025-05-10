@@ -3,9 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
-from app.api.v1 import agents, tools, nl, settings as settings_router
+from app.api.v1 import agents, tools, nl, settings as settings_router, chat
 from app.core.database import engine, Base, init_models
-from app.models import agent, tool, settings as settings_model  # Import models to ensure they are registered with Base
+from app.models import agent, tool, settings as settings_model, chat as chat_model  # Import models to ensure they are registered with Base
 
 # Configure logging
 logging.basicConfig(
@@ -46,8 +46,10 @@ app.add_middleware(
 # Include routers
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["Tools"])
+app.include_router(tools.logs_router, prefix="/api/v1/logs", tags=["Logs"])
 app.include_router(nl.router, prefix="/api/v1/nl", tags=["Natural Language"])
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["Settings"])
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 
 @app.get("/")
 async def root():

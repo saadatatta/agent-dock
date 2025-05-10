@@ -20,7 +20,17 @@ import {
   CircularProgress,
   Backdrop,
   Tooltip,
-  Avatar
+  Avatar,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  OutlinedInput,
+  Checkbox,
+  ListItemText,
+  Switch,
+  FormControlLabel,
+  FormGroup
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -29,10 +39,13 @@ import {
   Code as CodeIcon,
   GitHub as GitHubIcon,
   MoreVert as MoreVertIcon,
-  PlayArrow as PlayArrowIcon
+  PlayArrow as PlayArrowIcon,
+  BugReport as PullRequestIcon,
+  Storage as RepositoryIcon,
+  PowerSettingsNew as PowerIcon
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
-import { agentApi } from '../services/api';
+import { agentApi, toolApi } from '../services/api';
 import { Agent, Tool } from '../types/api';
 
 const AgentList: React.FC = () => {
@@ -51,9 +64,11 @@ const AgentList: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [availableTools, setAvailableTools] = useState<Tool[]>([]);
 
   useEffect(() => {
     fetchAgents();
+    fetchTools();
   }, []);
 
   const fetchAgents = async () => {
@@ -70,6 +85,16 @@ const AgentList: React.FC = () => {
       setError('Failed to fetch agents');
       console.error('Error fetching agents:', error);
       setLoading(false);
+    }
+  };
+
+  const fetchTools = async () => {
+    try {
+      const response = await toolApi.getTools();
+      setAvailableTools(response.data);
+    } catch (error) {
+      setError('Failed to fetch tools');
+      console.error('Error fetching tools:', error);
     }
   };
 
@@ -105,11 +130,38 @@ const AgentList: React.FC = () => {
 
   const handleSubmit = async () => {
     try {
+      let savedAgent;
       if (editingAgent) {
-        await agentApi.updateAgent(editingAgent.id, formData);
+        savedAgent = await agentApi.updateAgent(editingAgent.id, formData);
+        
+        // Get current tools
+        const currentToolIds = new Set(editingAgent.tools.map(tool => tool.id));
+        const newToolIds = new Set(formData.tools.map(tool => tool.id));
+        
+        // Add new tools
+        for (const tool of formData.tools) {
+          if (!currentToolIds.has(tool.id)) {
+            await agentApi.addToolToAgent(editingAgent.id, tool.id);
+          }
+        }
+        
+        // Remove removed tools
+        for (const tool of editingAgent.tools) {
+          if (!newToolIds.has(tool.id)) {
+            await agentApi.removeToolFromAgent(editingAgent.id, tool.id);
+          }
+        }
+        
         setSuccess('Agent updated successfully');
       } else {
-        await agentApi.createAgent(formData);
+        savedAgent = await agentApi.createAgent(formData);
+        
+        // Add tools to the newly created agent
+        const agentId = savedAgent.data.id;
+        for (const tool of formData.tools) {
+          await agentApi.addToolToAgent(agentId, tool.id);
+        }
+        
         setSuccess('Agent created successfully');
       }
       handleClose();
@@ -158,6 +210,101 @@ const AgentList: React.FC = () => {
     }
   };
 
+  // Helper function to determine the icon for an agent
+  const getAgentIcon = (agent: Agent) => {
+    // Check if agent name or description includes GitHub
+    if (agent.name.toLowerCase().includes('github') || 
+        (agent.description && agent.description.toLowerCase().includes('github'))) {
+      return <GitHubIcon sx={{ fontSize: 40 }} />;
+    }
+    
+    // Check if the agent has GitHub tools
+    const hasGitHubTool = agent.tools.some(tool => tool.type === 'github');
+    if (hasGitHubTool) {
+      return <GitHubIcon sx={{ fontSize: 40 }} />;
+    }
+    
+    // Default icon for other agents
+    return <CodeIcon sx={{ fontSize: 40 }} />;
+  };
+  
+  // Helper function to get GitHub specific actions for GitHub agents
+  const getGitHubActions = (agent: Agent) => {
+    // Only show these actions for GitHub agents
+    if (agent.name.toLowerCase().includes('github') || 
+        (agent.description && agent.description.toLowerCase().includes('github')) ||
+        agent.tools.some(tool => tool.type === 'github')) {
+      return (
+        <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+          <Tooltip title="List Repositories">
+            <IconButton 
+              size="small" 
+              color="primary"
+              onClick={() => handleExecuteAction(agent.id, "get_repositories", {})}
+            >
+              <RepositoryIcon />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="List Pull Requests">
+            <IconButton 
+              size="small" 
+              color="secondary"
+              onClick={() => {
+                // Show a dialog to get the repository name
+                const repo = prompt("Enter repository name (e.g., owner/repo):");
+                if (repo) {
+                  handleExecuteAction(agent.id, "list_pull_requests", { repo });
+                }
+              }}
+            >
+              <PullRequestIcon />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      );
+    }
+    return null;
+  };
+  
+  // Function to execute agent actions
+  const handleExecuteAction = async (agentId: number, action: string, parameters: any) => {
+    try {
+      setLoading(true);
+      const response = await agentApi.executeAgent(agentId, { action, parameters });
+      // Handle the response (could show in a modal or alert)
+      console.log("Agent execution result:", response);
+      setSuccess(`Successfully executed ${action}`);
+      setLoading(false);
+      // TODO: Display results in a modal or other UI component
+    } catch (error) {
+      setError(`Failed to execute agent action: ${action}`);
+      console.error('Error executing agent action:', error);
+      setLoading(false);
+    }
+  };
+
+  // Helper function to handle tool selection changes
+  const handleToolChange = (event: React.ChangeEvent<{ value: unknown }>) => {
+    const selectedToolIds = event.target.value as number[];
+    const selectedTools = availableTools.filter(tool => selectedToolIds.includes(tool.id));
+    setFormData({ ...formData, tools: selectedTools });
+  };
+
+  // Function to toggle agent active status
+  const handleToggleAgentStatus = async (agent: Agent, event: React.MouseEvent) => {
+    // Prevent the card click from triggering
+    event.stopPropagation();
+    
+    try {
+      await agentApi.updateAgent(agent.id, { is_active: !agent.is_active });
+      setSuccess(`Agent ${!agent.is_active ? 'activated' : 'deactivated'} successfully`);
+      fetchAgents();
+    } catch (error) {
+      setError('Failed to update agent status');
+      console.error('Error updating agent status:', error);
+    }
+  };
+
   return (
     <Box sx={{ position: 'relative' }}>
       <Backdrop
@@ -167,7 +314,7 @@ const AgentList: React.FC = () => {
         <CircularProgress color="primary" />
       </Backdrop>
       
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, mt: 4 }}>
         <Typography 
           variant="h4" 
           component={motion.h1}
@@ -246,176 +393,139 @@ const AgentList: React.FC = () => {
           <Grid container spacing={3}>
             <AnimatePresence>
               {agents.map((agent) => (
-                <Grid item xs={12} md={6} lg={4} key={agent.id}>
-                  <motion.div
-                    layout
-                    variants={itemVariants}
-                    whileHover={{ 
-                      y: -5,
-                      transition: { duration: 0.2 }
+                <Grid item xs={12} sm={6} md={4} key={agent.id} component={motion.div} variants={itemVariants}>
+                  <Card
+                    sx={{
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      position: 'relative',
+                      overflow: 'visible',
+                      background: 'rgba(30, 30, 30, 0.8)',
+                      backdropFilter: 'blur(10px)',
+                      borderRadius: 3,
+                      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      transition: 'all 0.3s ease',
+                      '&:hover': {
+                        transform: 'translateY(-5px)',
+                        boxShadow: '0 12px 40px rgba(0, 0, 0, 0.3)',
+                        border: '1px solid rgba(255, 255, 255, 0.2)',
+                      },
+                      opacity: agent.is_active ? 1 : 0.7
                     }}
                   >
-                    <Card
-                      sx={{ 
-                        height: '100%',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        position: 'relative',
-                        overflow: 'visible',
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        top: -20,
+                        right: 20,
+                        zIndex: 1,
                       }}
                     >
-                      <Box
-                        sx={{
-                          position: 'absolute',
-                          top: -15,
-                          left: 20,
-                          zIndex: 10,
-                          width: 48,
-                          height: 48,
-                        }}
-                      >
-                        <motion.div
-                          whileHover={{ rotate: 360 }}
-                          transition={{ duration: 0.5 }}
-                        >
-                          <Avatar
-                            sx={{
-                              width: 48,
-                              height: 48,
-                              border: '3px solid rgba(255, 255, 255, 0.1)',
-                              background: 'linear-gradient(45deg, #00FFFF, #00CCFF)',
-                              boxShadow: '0 4px 10px rgba(0, 255, 255, 0.3)',
-                            }}
-                          >
-                            {agent.name.charAt(0).toUpperCase()}
-                          </Avatar>
-                        </motion.div>
-                      </Box>
-                      
-                      <CardContent sx={{ pt: 3, pb: 2, flex: 1 }}>
-                        <Box sx={{ 
-                          display: 'flex', 
-                          justifyContent: 'space-between', 
-                          alignItems: 'flex-start',
-                          mt: 2
-                        }}>
-                          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, ml: 5 }}>
-                            {agent.name}
-                          </Typography>
-                          <Box>
-                            <Tooltip title="Edit agent">
-                              <motion.div
-                                style={{ display: 'inline-block' }}
-                                whileHover={{ scale: 1.2 }}
-                                whileTap={{ scale: 0.9 }}
-                              >
-                                <IconButton 
-                                  onClick={() => handleOpen(agent)} 
-                                  size="small"
-                                  sx={{ 
-                                    color: theme.palette.text.secondary,
-                                    '&:hover': { color: theme.palette.primary.main }
-                                  }}
-                                >
-                                  <EditIcon fontSize="small" />
-                                </IconButton>
-                              </motion.div>
-                            </Tooltip>
-                            <Tooltip title="Delete agent">
-                              <motion.div
-                                style={{ display: 'inline-block' }}
-                                whileHover={{ scale: 1.2 }}
-                                whileTap={{ scale: 0.9 }}
-                              >
-                                <IconButton 
-                                  onClick={() => handleDelete(agent.id)} 
-                                  size="small"
-                                  sx={{ 
-                                    color: theme.palette.text.secondary,
-                                    '&:hover': { color: theme.palette.error.main }
-                                  }}
-                                >
-                                  <DeleteIcon fontSize="small" />
-                                </IconButton>
-                              </motion.div>
-                            </Tooltip>
-                          </Box>
-                        </Box>
-                        
-                        <Typography 
-                          color="text.secondary" 
-                          sx={{ 
-                            mb: 2, 
-                            px: 1, 
-                            fontSize: '0.875rem',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
+                      <Tooltip title={agent.is_active ? "Deactivate Agent" : "Activate Agent"}>
+                        <IconButton
+                          onClick={(e) => handleToggleAgentStatus(agent, e)}
+                          sx={{
+                            backgroundColor: agent.is_active ? 'success.main' : 'grey.700',
+                            color: 'white',
+                            '&:hover': {
+                              backgroundColor: agent.is_active ? 'success.dark' : 'grey.600',
+                            },
+                            width: 40,
+                            height: 40,
                           }}
                         >
-                          {agent.description}
+                          <PowerIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                    
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        top: -20,
+                        left: 20,
+                        width: 60,
+                        height: 60,
+                        borderRadius: '50%',
+                        backgroundColor: 'background.paper',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                        border: '3px solid',
+                        borderColor: agent.is_active ? 'success.main' : 'grey.500',
+                        overflow: 'hidden',
+                        zIndex: 1,
+                      }}
+                    >
+                      {getAgentIcon(agent)}
+                    </Box>
+                    
+                    <CardContent sx={{ p: 3, pt: 5, flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <Typography variant="h5" component="h2" gutterBottom sx={{ fontWeight: 600, color: 'white' }}>
+                          {agent.name}
                         </Typography>
                         
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-                            {agent.tools && agent.tools.length > 0 ? (
-                              agent.tools.slice(0, 3).map((tool) => (
-                                <Chip
-                                  key={tool.id}
-                                  label={tool.name}
-                                  size="small"
-                                  icon={<CodeIcon />}
-                                  sx={{ 
-                                    background: 'rgba(0, 255, 255, 0.1)',
-                                    borderRadius: '10px',
-                                    '&:hover': {
-                                      background: 'rgba(0, 255, 255, 0.2)',
-                                    }
-                                  }}
-                                />
-                              ))
-                            ) : (
-                              <Typography variant="caption" color="text.secondary">
-                                No tools assigned
-                              </Typography>
-                            )}
-                            {agent.tools && agent.tools.length > 3 && (
-                              <Chip
-                                label={`+${agent.tools.length - 3}`}
-                                size="small"
-                                sx={{ 
-                                  background: 'rgba(255, 255, 255, 0.05)',
-                                  borderRadius: '10px'
-                                }}
-                              />
-                            )}
-                          </Stack>
-                          
-                          <Tooltip title="Run agent">
-                            <motion.div
-                              whileHover={{ scale: 1.1 }}
-                              whileTap={{ scale: 0.9 }}
-                            >
-                              <IconButton
-                                color="primary"
-                                size="small"
-                                sx={{ 
-                                  background: 'rgba(0, 255, 255, 0.1)',
-                                  '&:hover': {
-                                    background: 'rgba(0, 255, 255, 0.2)',
-                                  }
-                                }}
-                              >
-                                <PlayArrowIcon fontSize="small" />
-                              </IconButton>
-                            </motion.div>
-                          </Tooltip>
+                        <Box>
+                          <IconButton 
+                            onClick={() => handleOpen(agent)} 
+                            size="small" 
+                            sx={{ color: 'grey.400' }}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                          <IconButton 
+                            onClick={() => handleDelete(agent.id)} 
+                            size="small" 
+                            sx={{ color: 'grey.400' }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
                         </Box>
-                      </CardContent>
-                    </Card>
-                  </motion.div>
+                      </Box>
+                      
+                      <Typography 
+                        variant="body2" 
+                        color="text.secondary" 
+                        sx={{ 
+                          mb: 2, 
+                          height: 60, 
+                          overflow: 'hidden',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical',
+                          color: 'grey.400' 
+                        }}
+                      >
+                        {agent.description || 'No description provided'}
+                      </Typography>
+                      
+                      <Box sx={{ mt: 'auto' }}>
+                        <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', gap: 1, minHeight: 32 }}>
+                          {agent.tools.map(tool => (
+                            <Chip 
+                              key={tool.id} 
+                              label={tool.name}
+                              size="small"
+                              icon={tool.type === 'github' ? <GitHubIcon /> : <CodeIcon />}
+                              sx={{ 
+                                bgcolor: 'rgba(255, 255, 255, 0.1)', 
+                                color: 'grey.300',
+                                borderRadius: 1
+                              }} 
+                            />
+                          ))}
+                        </Stack>
+                        
+                        <Box sx={{ minHeight: 40 }}>
+                          {getGitHubActions(agent)}
+                        </Box>
+                      </Box>
+                    </CardContent>
+                  </Card>
                 </Grid>
               ))}
             </AnimatePresence>
@@ -474,6 +584,76 @@ const AgentList: React.FC = () => {
                 }
               }}
             />
+            
+            <FormGroup sx={{ my: 2 }}>
+              <FormControlLabel
+                control={
+                  <Switch 
+                    checked={formData.is_active}
+                    onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                    color="success"
+                  />
+                }
+                label="Agent Active"
+              />
+            </FormGroup>
+            
+            {/* Tool Selection */}
+            <FormControl 
+              fullWidth 
+              margin="normal" 
+              variant="outlined"
+              sx={{ mt: 2 }}
+            >
+              <InputLabel id="tool-selection-label">Bind Tools</InputLabel>
+              <Select
+                labelId="tool-selection-label"
+                id="tool-selection"
+                multiple
+                value={formData.tools.map(tool => tool.id)}
+                onChange={(e) => handleToolChange(e as any)}
+                input={
+                  <OutlinedInput 
+                    label="Bind Tools" 
+                    sx={{ 
+                      borderRadius: 2, 
+                      background: 'rgba(0, 0, 0, 0.2)',
+                    }}
+                  />
+                }
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {(selected as number[]).map((value) => {
+                      const tool = availableTools.find(t => t.id === value);
+                      return tool ? (
+                        <Chip 
+                          key={value} 
+                          label={tool.name} 
+                          size="small"
+                          icon={tool.type === 'github' ? <GitHubIcon /> : <CodeIcon />}
+                          sx={{ 
+                            bgcolor: 'rgba(255, 255, 255, 0.1)', 
+                            color: 'grey.300',
+                            borderRadius: 1
+                          }}
+                        />
+                      ) : null;
+                    })}
+                  </Box>
+                )}
+              >
+                {availableTools.map((tool) => (
+                  <MenuItem key={tool.id} value={tool.id}>
+                    <Checkbox checked={formData.tools.some(t => t.id === tool.id)} />
+                    <ListItemText 
+                      primary={tool.name} 
+                      secondary={tool.type.charAt(0).toUpperCase() + tool.type.slice(1)}
+                    />
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            
             <TextField
               fullWidth
               label="Code"
