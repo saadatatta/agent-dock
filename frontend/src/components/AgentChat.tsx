@@ -17,7 +17,11 @@ import {
   useTheme,
   Paper,
   InputAdornment,
-  Tooltip
+  Tooltip,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -31,7 +35,10 @@ import {
   AutoAwesome as MagicIcon,
   Mic as MicIcon,
   MicOff as MicOffIcon,
-  Memory as MemoryIcon
+  Memory as MemoryIcon,
+  MoreVert as MoreIcon,
+  History as HistoryIcon,
+  Save as SaveIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -82,11 +89,23 @@ declare global {
   }
 }
 
+// New interface for chat sessions
+interface ChatSession {
+  session_id: string;
+  last_message: {
+    content: string;
+    sender: string;
+    created_at: string;
+  };
+  timestamp: string;
+}
+
 const AgentChat: React.FC = () => {
   const theme = useTheme();
   const [query, setQuery] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAlert, setShowAlert] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -96,6 +115,10 @@ const AgentChat: React.FC = () => {
     provider: '',
     model: ''
   });
+  // New state for chat sessions
+  const [sessionId, setSessionId] = useState<string>('');
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
 
   // Animation variants
   const containerVariants = {
@@ -125,17 +148,128 @@ const AgentChat: React.FC = () => {
     }
   };
 
-  // Add a system message on component mount
-  useEffect(() => {
-    const systemMessage: Message = {
-      id: 'system-welcome',
-      content: 'Welcome to Agent Chat! You can ask questions like "Show me my GitHub repositories" or You can also use the microphone button to speak your query.',
-      sender: 'system',
-      timestamp: new Date()
-    };
-    setMessages([systemMessage]);
+  // Function to save a message to the backend
+  const saveMessageToBackend = async (message: Message) => {
+    try {
+      // Skip saving system welcome message
+      if (message.id === 'system-welcome') return;
+      
+      const metadata: any = {};
+      
+      if (message.agentId) metadata.agent_id = message.agentId;
+      if (message.agentName) metadata.agent_name = message.agentName;
+      if (message.modelInfo) metadata.model_info = message.modelInfo;
+      
+      await axios.post('http://localhost:8000/api/v1/chat/messages', {
+        session_id: sessionId,
+        content: message.content,
+        sender: message.sender,
+        message_type: 'text',
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined
+      });
+    } catch (error) {
+      console.error('Error saving message:', error);
+      // Don't show error to user, just log it
+    }
+  };
 
-    // Initialize speech recognition
+  // Load chat history when component mounts
+  useEffect(() => {
+    loadChatHistory();
+  }, []);
+
+  // Load chat history from the backend
+  const loadChatHistory = async (sid?: string) => {
+    try {
+      setLoadingHistory(true);
+      
+      const endpoint = sid 
+        ? `http://localhost:8000/api/v1/chat/messages?session_id=${sid}`
+        : 'http://localhost:8000/api/v1/chat/messages';
+        
+      const response = await axios.get(endpoint);
+      
+      if (response.data.status === 'success' && response.data.messages.length > 0) {
+        // Convert backend messages to our Message format
+        const historyMessages: Message[] = response.data.messages.map((msg: any) => ({
+          id: `db-${msg.id}`,
+          content: msg.content,
+          sender: msg.sender,
+          timestamp: new Date(msg.created_at),
+          agentId: msg.metadata?.agent_id,
+          agentName: msg.metadata?.agent_name,
+          modelInfo: msg.metadata?.model_info
+        }));
+        
+        setMessages(historyMessages);
+        setSessionId(response.data.session_id);
+      } else {
+        // If no history, show welcome message
+        const systemMessage: Message = {
+          id: 'system-welcome',
+          content: 'Welcome to Agent Chat! You can ask questions like "Show me my GitHub repositories" or You can also use the microphone button to speak your query.',
+          sender: 'system',
+          timestamp: new Date()
+        };
+        setMessages([systemMessage]);
+        
+        // Generate a new session ID if we don't have one
+        if (!sessionId) {
+          const newSessionResponse = await axios.post('http://localhost:8000/api/v1/chat/messages', {
+            content: systemMessage.content,
+            sender: systemMessage.sender,
+            message_type: 'text'
+          });
+          setSessionId(newSessionResponse.data.session_id);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading chat history:', error);
+      // Show a welcome message anyway
+      const systemMessage: Message = {
+        id: 'system-welcome',
+        content: 'Welcome to Agent Chat! You can ask questions like "Show me my GitHub repositories" or You can also use the microphone button to speak your query.',
+        sender: 'system',
+        timestamp: new Date()
+      };
+      setMessages([systemMessage]);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+  
+  // Load available chat sessions
+  const loadChatSessions = async () => {
+    try {
+      const response = await axios.get('http://localhost:8000/api/v1/chat/sessions');
+      if (response.data.status === 'success') {
+        setChatSessions(response.data.sessions);
+      }
+    } catch (error) {
+      console.error('Error loading chat sessions:', error);
+    }
+  };
+  
+  // Handle opening the history menu
+  const handleHistoryMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    loadChatSessions();
+    setMenuAnchorEl(event.currentTarget);
+  };
+  
+  // Handle closing the history menu
+  const handleHistoryMenuClose = () => {
+    setMenuAnchorEl(null);
+  };
+  
+  // Handle selecting a chat session
+  const handleSessionSelect = (sid: string) => {
+    loadChatHistory(sid);
+    handleHistoryMenuClose();
+  };
+
+  // Modified to initialize speech recognition
+  useEffect(() => {
+    // Speech recognition setup code - keep existing code
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       recognitionRef.current = new SpeechRecognition();
@@ -163,7 +297,7 @@ const AgentChat: React.FC = () => {
     }
 
     return () => {
-      // Cleanup speech recognition
+      // Cleanup speech recognition - keep existing code
       if (recognitionRef.current) {
         recognitionRef.current.abort();
       }
@@ -342,6 +476,7 @@ const AgentChat: React.FC = () => {
     }
   };
 
+  // Modified handleSubmit to save messages to the backend
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
@@ -357,6 +492,9 @@ const AgentChat: React.FC = () => {
     setMessages(prev => [...prev, userMessage]);
     setQuery('');
     setLoading(true);
+    
+    // Save user message to backend
+    await saveMessageToBackend(userMessage);
 
     try {
       // Add a temporary agent message to indicate processing
@@ -483,32 +621,65 @@ const AgentChat: React.FC = () => {
         msg.id === tempAgentId ? agentMessage : msg
       ));
       
+      // Save agent message to backend
+      await saveMessageToBackend(agentMessage);
+      
     } catch (error) {
       console.error('Error processing query:', error);
       setError('Failed to process your query. Please try again.');
       
       // Update the temporary message to show the error
+      const errorMessage = {
+        id: `agent-${Date.now()}`,
+        content: 'Sorry, I encountered an error while processing your request.',
+        sender: 'agent' as const,
+        timestamp: new Date()
+      };
+      
       setMessages(prev => prev.map(msg => 
-        msg.id.startsWith('agent-temp') ? {
-          ...msg,
-          content: 'Sorry, I encountered an error while processing your request.',
-          id: `agent-${Date.now()}`
-        } : msg
+        msg.id.startsWith('agent-temp') ? errorMessage : msg
       ));
+      
+      // Save error message to backend
+      await saveMessageToBackend(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  const clearChat = () => {
+  // Modified clearChat to delete session from backend
+  const clearChat = async () => {
     if (window.confirm('Are you sure you want to clear the chat history?')) {
+      // If we have a session ID, delete it from the backend
+      if (sessionId) {
+        try {
+          await axios.delete(`http://localhost:8000/api/v1/chat/messages/${sessionId}`);
+        } catch (error) {
+          console.error('Error deleting chat session:', error);
+        }
+      }
+      
+      // Create a new system message
       const systemMessage: Message = {
         id: 'system-welcome',
         content: 'Chat history cleared. How can I assist you today?',
         sender: 'system',
         timestamp: new Date()
       };
+      
       setMessages([systemMessage]);
+      
+      // Generate a new session ID
+      try {
+        const response = await axios.post('http://localhost:8000/api/v1/chat/messages', {
+          content: systemMessage.content,
+          sender: systemMessage.sender,
+          message_type: 'text'
+        });
+        setSessionId(response.data.session_id);
+      } catch (error) {
+        console.error('Error creating new session:', error);
+      }
     }
   };
 
@@ -626,7 +797,7 @@ const AgentChat: React.FC = () => {
           Agent Chat
         </Typography>
         
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
           {activeLLM.provider && (
             <Chip
               icon={<MemoryIcon fontSize="small" />}
@@ -640,6 +811,101 @@ const AgentChat: React.FC = () => {
               }}
             />
           )}
+          
+          {/* History Menu Button */}
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Tooltip title="Chat History">
+              <IconButton
+                onClick={handleHistoryMenuOpen}
+                size="small"
+                sx={{
+                  bgcolor: 'rgba(0, 153, 255, 0.1)',
+                  '&:hover': {
+                    bgcolor: 'rgba(0, 153, 255, 0.2)'
+                  }
+                }}
+              >
+                <HistoryIcon />
+              </IconButton>
+            </Tooltip>
+          </motion.div>
+          
+          {/* Chat Sessions Menu */}
+          <Menu
+            anchorEl={menuAnchorEl}
+            open={Boolean(menuAnchorEl)}
+            onClose={handleHistoryMenuClose}
+            PaperProps={{
+              sx: {
+                mt: 1.5,
+                maxHeight: 300,
+                width: 320,
+                overflow: 'auto',
+                backgroundColor: 'rgba(30, 30, 30, 0.95)',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+              }
+            }}
+          >
+            <Typography variant="subtitle2" sx={{ px: 2, py: 1, color: 'text.secondary' }}>
+              Recent Conversations
+            </Typography>
+            <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)' }} />
+            
+            {loadingHistory ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                <CircularProgress size={24} color="primary" />
+              </Box>
+            ) : chatSessions.length > 0 ? (
+              chatSessions.map((session) => (
+                <MenuItem 
+                  key={session.session_id} 
+                  onClick={() => handleSessionSelect(session.session_id)}
+                  sx={{ 
+                    borderRadius: 1,
+                    mx: 1,
+                    my: 0.5,
+                    '&:hover': { 
+                      bgcolor: 'rgba(255, 255, 255, 0.05)' 
+                    }
+                  }}
+                >
+                  <ListItemIcon>
+                    {session.last_message.sender === 'user' ? 
+                      <UserIcon fontSize="small" /> : 
+                      <AgentIcon fontSize="small" />
+                    }
+                  </ListItemIcon>
+                  <ListItemText 
+                    primary={
+                      <Typography 
+                        variant="body2" 
+                        noWrap 
+                        sx={{ maxWidth: 200 }}
+                      >
+                        {session.last_message.content}
+                      </Typography>
+                    }
+                    secondary={
+                      <Typography variant="caption" color="text.secondary">
+                        {new Date(session.timestamp).toLocaleString()}
+                      </Typography>
+                    }
+                  />
+                </MenuItem>
+              ))
+            ) : (
+              <MenuItem disabled>
+                <Typography variant="body2" color="text.secondary">
+                  No conversation history found
+                </Typography>
+              </MenuItem>
+            )}
+          </Menu>
           
           <motion.div
             whileHover={{ scale: 1.05 }}

@@ -29,7 +29,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
   
   # Execute the setup script inside the container
   echo "Executing database setup script..."
-  docker exec -it agent-dock-backend python /app/setup_db.py
+  docker exec -it agent-dock-backend-1 python /app/setup_db.py
   
   if [ $? -eq 0 ]; then
     echo "====== DATABASE SETUP COMPLETED SUCCESSFULLY ======"

@@ -13,6 +13,7 @@ import sys
 import logging
 import subprocess
 from sqlalchemy.exc import IntegrityError
+import uuid
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -26,6 +27,7 @@ from app.core.database import SessionLocal
 from app.models.tool import Tool, ToolLog
 from app.models.agent import Agent
 from app.models.settings import Settings
+from app.models.chat import ChatMessage  # Import the ChatMessage model
 
 def reset_database():
     """Reset the database using the existing reset_db.py script"""
@@ -167,14 +169,14 @@ elif action == "list_pull_requests":
             is_active=True
         ),
         Agent(
-            name="Notification Agent",
-            description="An agent that handles sending notifications via Slack",
+            name="Slack Agent",
+            description="An agent that handles sending messages via Slack",
             code="""
-# Notification Agent for sending notifications
-# This agent will use the Slack API tool to send notifications
+# Slack Agent for sending messages
+# This agent will use the Slack API tool to send messages
 
 # Check what action was requested
-if action == "send_notification":
+if action == "send_message":
     # Find the Slack tool
     slack_tool = next((t for t in tools if t.type == "slack"), None)
     if not slack_tool:
@@ -215,7 +217,7 @@ if action == "send_notification":
                 agent.tools.append(github_tool)
                 logger.info(f"Linked GitHub tool to {agent.name}")
             
-            if agent.name == "Notification Agent" and slack_tool:
+            if agent.name == "Slack Agent" and slack_tool:
                 agent.tools.append(slack_tool)
                 logger.info(f"Linked Slack tool to {agent.name}")
                 
@@ -292,6 +294,57 @@ def setup_settings(db):
     db.commit()
     logger.info("Settings setup completed.")
 
+def setup_chat_messages(db):
+    """Set up a sample chat conversation in the database"""
+    logger.info("Setting up sample chat messages...")
+    
+    # Create a session ID for the sample conversation
+    session_id = str(uuid.uuid4())
+    
+    # Define messages to be created
+    messages = [
+        ChatMessage(
+            session_id=session_id,
+            content="Welcome to Agent Chat! This is a sample conversation to demonstrate the chat history feature.",
+            sender="system",
+            message_type="text",
+            message_metadata=None
+        ),
+        ChatMessage(
+            session_id=session_id,
+            content="Hello! Can you show me how to use this application?",
+            sender="user",
+            message_type="text",
+            message_metadata=None
+        ),
+        ChatMessage(
+            session_id=session_id,
+            content="Of course! You can ask me questions about GitHub repositories, use tools, and I'll help you with your tasks. Your chat history is now saved between sessions.",
+            sender="agent",
+            message_type="text",
+            message_metadata={
+                "agent_name": "Assistant",
+                "model_info": {
+                    "provider": "OpenAI",
+                    "model": "gpt-4"
+                }
+            }
+        )
+    ]
+    
+    # Add each message to the database
+    for message in messages:
+        try:
+            db.add(message)
+            db.flush()
+            logger.info(f"Created chat message: ID {message.id} in session {message.session_id}")
+        except IntegrityError:
+            db.rollback()
+            logger.warning(f"Error creating chat message, skipping.")
+    
+    db.commit()
+    logger.info("Sample chat messages setup completed.")
+
 def main():
     """Main function to run the database setup process"""
     logger.info("Starting database setup process...")
@@ -309,6 +362,7 @@ def main():
         setup_tools(db)
         setup_agents(db)
         setup_settings(db)
+        setup_chat_messages(db)
         
         logger.info("Database setup completed successfully.")
     except Exception as e:

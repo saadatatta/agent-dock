@@ -161,6 +161,10 @@ class NaturalLanguageService:
                 elif response_data.get("ok", False):
                     return f"Message successfully sent to {channel} channel."
                 
+                # Check if 'success' field exists and contains an object with 'ok' field
+                elif "success" in response_data and isinstance(response_data["success"], dict) and response_data["success"].get("ok", False):
+                    return f"Message successfully sent to {channel} channel."
+                
                 # Finally, check if "ok" is nested in "details" (our Slack Agent structure)
                 elif "details" in response_data and isinstance(response_data["details"], dict) and response_data["details"].get("ok", False):
                     return f"Message successfully sent to {channel} channel."

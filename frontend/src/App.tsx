@@ -257,7 +257,7 @@ const App: React.FC = () => {
               minHeight: '100vh',
               display: 'flex',
               flexDirection: 'column',
-              mt: { xs: '64px', sm: '70px' },
+              mt: { xs: '64px', sm: '70px', xl: '40px' },
               position: 'relative',
               zIndex: 1,
             }}

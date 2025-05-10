@@ -84,7 +84,7 @@ class ToolService:
 
     def get_all_logs(self, db: Session, skip: int = 0, limit: int = 10) -> List[ToolLog]:
         """Get all tool logs"""
-        return db.query(ToolLog).offset(skip).limit(limit).all()
+        return db.query(ToolLog).order_by(ToolLog.created_at.desc()).offset(skip).limit(limit).all()
 
     def count_logs(self, db: Session) -> int:
         """Count total number of logs"""
