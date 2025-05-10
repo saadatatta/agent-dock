@@ -2,6 +2,44 @@
 
 AgentDock is a Model Context Protocol (MCP) server that enables multi-agent orchestration, tool integrations, and LLM-powered interactions through a clean web interface.
 
+## Screenshots
+
+##### Agents List
+![Agents List](./docs/images/agents_list.png)
+
+#### Tools List
+![Tools List](./docs/images/tools_list.png)
+
+#### Chat UI
+History is saved on page refresh
+
+![Chat](./docs/images/chat.png)
+
+- Trigger Github Agent List Repos Tool
+![Github List Repos](./docs/images/trigger_github.png)
+- Trigger Github Agent PR Tool
+![Github List PR](./docs/images/trigger_github_pr.png)
+- Trigger Slack tool
+![Slack tool](./docs/images/trigger_slack.png)
+![Slack Response](./docs/images/slack_response.png)
+- When error message
+![Github List PR](./docs/images/error_message.png)
+
+#### Tool Logs
+![Logs](./docs/images/tool_logs.png)
+There are two types of logs
+- LLM logs with tokens info
+![LLM logs](./docs/images/llm_logs.png)
+- User Response Logs
+![LLM logs](./docs/images/user_response_log.png)
+- When error occurs
+![LLM logs](./docs/images/error_on_tool_log.png)
+
+#### LLM Models UI
+We have only one activated model as only its key was available.
+![LLM logs](./docs/images/ai_models.png)
+
+
 ## Features
 
 - 🤖 Multi-Agent Support
