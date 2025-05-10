@@ -10,13 +10,15 @@ AgentDock is a Model Context Protocol (MCP) server that enables multi-agent orch
 - 📊 Real-time Monitoring & Logs
 - 🎯 REST API for Tool Registration
 - 🎨 Clean & Intuitive UI
+- 📝 Chat History & Message Management
+- 🔊 Speech Recognition Support
 
 ## Tech Stack
 
 - **Backend**: Python (FastAPI)
 - **Frontend**: React with TypeScript
 - **Database**: PostgreSQL
-- **LLM Integration**: Groq
+- **LLM Integration**: Groq, OpenAI, Anthropic
 - **Containerization**: Docker & Docker Compose
 
 ## Prerequisites
@@ -158,6 +160,37 @@ The tool integration system is designed for extensibility:
    - Dynamic tool discovery during agent execution
    - Runtime access control based on bindings
 
+### Chat History & Message Management
+
+The application now includes a robust chat history system:
+
+1. **Message Persistence**:
+   - All chat interactions are stored in the database
+   - Messages are associated with specific chat sessions
+   - Full support for retrieving historical conversations
+
+2. **Chat Session Management**:
+   - Create, view, and manage multiple chat sessions
+   - Session metadata tracking (creation time, last activity)
+   - Session naming and organization
+
+3. **User Experience**:
+   - Seamless chat continuity between sessions
+   - Ability to search and filter chat history
+   - Real-time updates and synchronization
+
+### Integrated Agents
+
+1. **GitHub Agent**:
+   - Repository listing and management
+   - Pull request tracking and interaction
+   - Issue management
+
+2. **Slack Agent**:
+   - Message sending to channels
+   - Real-time notifications
+   - Channel management integration
+
 ## Development Setup
 
 ### Backend
@@ -208,6 +241,7 @@ This script will:
 2. Create required tools (GitHub API, Slack API, Jira API, etc.)
 3. Create default agents and link them to appropriate tools
 4. Add required settings entries
+5. Set up sample chat sessions and messages
 
 ### Manual Database Operations
 
